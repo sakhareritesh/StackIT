@@ -49,24 +49,57 @@ export default function AskAIPage() {
     }
 
     setMessages((prev) => [...prev, userMessage])
+    const currentInput = input.trim()
     setInput("")
     setLoading(true)
 
     try {
-      // Simulate AI response (replace with actual AI integration)
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      // Call the Flask API
+      const response = await fetch("http://127.0.0.1:5000/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: currentInput,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      if (data.error) {
+        throw new Error(data.error)
+      }
 
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: `I understand you're asking about: "${userMessage.content}"\n\nThis is a simulated AI response. In a production environment, this would be connected to an AI service like OpenAI, Anthropic, or similar.\n\nFor now, I'd recommend:\n1. Breaking down your problem into smaller parts\n2. Checking the existing questions on StackIt\n3. Providing more specific details about your use case\n\nWould you like to post this as a regular question to get help from the community?`,
+        content: data.response,
         timestamp: new Date(),
       }
 
       setMessages((prev) => [...prev, aiResponse])
     } catch (error) {
       console.error("Error getting AI response:", error)
-      toast({ title: "Error", description: "Failed to get AI response", variant: "destructive" })
+      
+      // Fallback message
+      const fallbackResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "I'm sorry, I'm having trouble connecting to the AI service right now. Please make sure the API server is running on localhost:5000, or try again later.",
+        timestamp: new Date(),
+      }
+      
+      setMessages((prev) => [...prev, fallbackResponse])
+      toast({ 
+        title: "Error", 
+        description: "Failed to get AI response. Check if the API server is running.", 
+        variant: "destructive" 
+      })
     } finally {
       setLoading(false)
     }
