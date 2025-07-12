@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { User, Award, MessageSquare, TrendingUp, Calendar, Star, Check, Users } from "lucide-react"
-import { doc, getDoc, collection, query, where, orderBy, getDocs } from "firebase/firestore"
+import { doc, collection, query, where, orderBy, getDocs, onSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
 import { QuestionCard } from "@/components/question-card"
@@ -32,11 +32,13 @@ export default function UserProfilePage() {
       if (!userId) return
 
       try {
-        // Fetch user profile
-        const userDoc = await getDoc(doc(db, "users", userId))
-        if (userDoc.exists()) {
-          setProfileUser({ id: userDoc.id, ...userDoc.data() })
-        }
+        // Set up real-time listener for user profile
+        const userDocRef = doc(db, "users", userId)
+        const unsubscribe = onSnapshot(userDocRef, (doc) => {
+          if (doc.exists()) {
+            setProfileUser({ id: doc.id, ...doc.data() })
+          }
+        })
 
         // Fetch user statistics
         const stats = await getUserStats(userId)
@@ -90,6 +92,8 @@ export default function UserProfilePage() {
           const following = await isFollowing(currentUser.uid, userId)
           setIsFollowingUser(following)
         }
+
+        return unsubscribe
       } catch (error) {
         console.error("Error fetching user profile:", error)
       } finally {
@@ -185,14 +189,14 @@ export default function UserProfilePage() {
                 </div>
                 <div className="flex items-center">
                   <Star className="w-4 h-4 mr-1 text-yellow-500" />
-                  <span>{userStats.karma || 0} karma</span>
+                  <span>{profileUser.karma || 0} karma</span>
                 </div>
                 <div className="flex items-center">
                   <Users className="w-4 h-4 mr-1" />
-                  <span>{userStats.followerCount || 0} followers</span>
+                  <span>{profileUser.followerCount || 0} followers</span>
                 </div>
                 <span>•</span>
-                <span>{userStats.followingCount || 0} following</span>
+                <span>{profileUser.followingCount || 0} following</span>
               </div>
               {currentUser && currentUser.uid !== userId && (
                 <Button
@@ -234,21 +238,21 @@ export default function UserProfilePage() {
         <Card>
           <CardContent className="pt-6 text-center">
             <Star className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{userStats.karma || 0}</h3>
+            <h3 className="text-2xl font-bold">{profileUser.karma || 0}</h3>
             <p className="text-gray-600">Karma</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center">
             <Users className="w-8 h-8 text-purple-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{userStats.followerCount || 0}</h3>
+            <h3 className="text-2xl font-bold">{profileUser.followerCount || 0}</h3>
             <p className="text-gray-600">Followers</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center">
             <Award className="w-8 h-8 text-indigo-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{userStats.badges?.length || 0}</h3>
+            <h3 className="text-2xl font-bold">{profileUser.badges?.length || 0}</h3>
             <p className="text-gray-600">Badges</p>
           </CardContent>
         </Card>
@@ -259,7 +263,7 @@ export default function UserProfilePage() {
         <TabsList>
           <TabsTrigger value="questions">Questions ({userStats.questionsCount || 0})</TabsTrigger>
           <TabsTrigger value="answers">Answers ({userStats.answersCount || 0})</TabsTrigger>
-          <TabsTrigger value="badges">Badges ({userStats.badges?.length || 0})</TabsTrigger>
+          <TabsTrigger value="badges">Badges ({profileUser.badges?.length || 0})</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
@@ -335,9 +339,9 @@ export default function UserProfilePage() {
               <CardTitle>Badges & Achievements</CardTitle>
             </CardHeader>
             <CardContent>
-              {userStats.badges && userStats.badges.length > 0 ? (
+              {profileUser.badges && profileUser.badges.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {userStats.badges.map((badge: string, index: number) => (
+                  {profileUser.badges.map((badge: string, index: number) => (
                     <div
                       key={index}
                       className="flex items-center space-x-3 p-4 border rounded-lg bg-gradient-to-r from-yellow-50 to-orange-50"

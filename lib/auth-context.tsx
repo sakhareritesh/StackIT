@@ -11,7 +11,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
 } from "firebase/auth"
-import { doc, getDoc, setDoc } from "firebase/firestore"
+import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore"
 import { auth, db } from "./firebase"
 
 interface UserProfile {
@@ -27,6 +27,8 @@ interface UserProfile {
   followerCount?: number
   followingCount?: number
   avatar?: string
+  bio?: string
+  acceptedAnswers?: number
 }
 
 interface AuthContextType {
@@ -37,6 +39,7 @@ interface AuthContextType {
   signUp: (email: string, password: string, username: string) => Promise<void>
   signInWithGoogle: () => Promise<void>
   logout: () => Promise<void>
+  refreshProfile: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -47,25 +50,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setUser(user)
       if (user) {
-        try {
-          const userDoc = await getDoc(doc(db, "users", user.uid))
-          if (userDoc.exists()) {
-            setUserProfile(userDoc.data() as UserProfile)
-          }
-        } catch (error) {
-          console.error("Error fetching user profile:", error)
-        }
+        // Set up real-time listener for user profile
+        const userDocRef = doc(db, "users", user.uid)
+        const unsubscribeProfile = onSnapshot(
+          userDocRef,
+          (doc) => {
+            if (doc.exists()) {
+              setUserProfile(doc.data() as UserProfile)
+            } else {
+              setUserProfile(null)
+            }
+            setLoading(false)
+          },
+          (error) => {
+            console.error("Error listening to user profile:", error)
+            setLoading(false)
+          },
+        )
+
+        // Return cleanup function for profile listener
+        return () => unsubscribeProfile()
       } else {
         setUserProfile(null)
+        setLoading(false)
       }
-      setLoading(false)
     })
 
-    return unsubscribe
+    return unsubscribeAuth
   }, [])
+
+  const refreshProfile = async () => {
+    if (!user) return
+
+    try {
+      const userDoc = await getDoc(doc(db, "users", user.uid))
+      if (userDoc.exists()) {
+        setUserProfile(userDoc.data() as UserProfile)
+      }
+    } catch (error) {
+      console.error("Error refreshing user profile:", error)
+    }
+  }
 
   const signIn = async (email: string, password: string) => {
     try {
@@ -91,6 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         bookmarks: [],
         followerCount: 0,
         followingCount: 0,
+        acceptedAnswers: 0,
       }
       await setDoc(doc(db, "users", user.uid), userProfile)
     } catch (error: any) {
@@ -119,6 +148,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           followerCount: 0,
           followingCount: 0,
           avatar: user.photoURL || undefined,
+          acceptedAnswers: 0,
         }
         await setDoc(doc(db, "users", user.uid), userProfile)
       }
@@ -147,6 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         signInWithGoogle,
         logout,
+        refreshProfile,
       }}
     >
       {children}

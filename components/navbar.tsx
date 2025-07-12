@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -15,8 +15,6 @@ import { useAuth } from "@/lib/auth-context"
 import { useNotifications } from "@/hooks/use-notifications"
 import { AuthDialog } from "./auth-dialog"
 import { formatDistanceToNow } from "date-fns"
-import { doc, getDoc } from "firebase/firestore"
-import { db } from "@/lib/firebase"
 
 export function Navbar() {
   const { user, userProfile, logout } = useAuth()
@@ -31,27 +29,6 @@ export function Navbar() {
       router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
     }
   }
-
-  // Add this useEffect to refresh user profile data
-  useEffect(() => {
-    const refreshUserProfile = async () => {
-      if (user) {
-        try {
-          const userDoc = await getDoc(doc(db, "users", user.uid))
-          if (userDoc.exists()) {
-            // This will trigger a re-render with updated profile data
-            window.location.reload()
-          }
-        } catch (error) {
-          console.error("Error refreshing user profile:", error)
-        }
-      }
-    }
-
-    // Refresh profile data every 30 seconds
-    const interval = setInterval(refreshUserProfile, 30000)
-    return () => clearInterval(interval)
-  }, [user])
 
   return (
     <nav className="border-b bg-white sticky top-0 z-50">
