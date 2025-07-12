@@ -71,6 +71,7 @@ export default function QuestionDetailPage() {
         setAnswers(fetchedAnswers)
       } catch (error) {
         console.error("Error fetching answers:", error)
+        // Don't show error to user for periodic fetches - fallback will handle it
       }
     }
 
@@ -151,21 +152,29 @@ export default function QuestionDetailPage() {
 
       await createAnswer(answerData)
 
-      // Create notification for question author
+      // Create notification for question author (non-blocking)
       if (question && question.authorId !== user.uid) {
-        await createNotification({
+        createNotification({
           userId: question.authorId,
           type: "answer",
           message: `${userProfile?.username || "Someone"} answered your question: ${question.title}`,
           questionId,
+        }).catch(err => {
+          console.warn("Failed to create notification:", err)
+          // Don't block the main flow
         })
       }
 
       setNewAnswer("")
 
-      // Refresh answers
-      const updatedAnswers = await getAnswers(questionId)
-      setAnswers(updatedAnswers)
+      // Refresh answers (non-blocking)
+      try {
+        const updatedAnswers = await getAnswers(questionId)
+        setAnswers(updatedAnswers)
+      } catch (refreshError) {
+        console.warn("Failed to refresh answers after posting:", refreshError)
+        // Don't block the success flow - the periodic refresh will pick it up
+      }
 
       toast({ title: "Success!", description: "Your answer has been posted" })
     } catch (error) {
@@ -182,19 +191,31 @@ export default function QuestionDetailPage() {
     try {
       await acceptAnswer(questionId, answerId, authorId)
 
-      // Create notification for answer author
-      await createNotification({
+      // Create notification for answer author (non-blocking)
+      createNotification({
         userId: authorId,
         type: "accept",
         message: `Your answer was accepted for: ${question.title}`,
         questionId,
+      }).catch(err => {
+        console.warn("Failed to create notification:", err)
+        // Don't block the main flow
       })
 
-      // Refresh data
-      const updatedQuestion = await getQuestion(questionId)
-      const updatedAnswers = await getAnswers(questionId)
-      if (updatedQuestion) setQuestion(updatedQuestion)
-      setAnswers(updatedAnswers)
+      // Refresh data (non-blocking)
+      try {
+        const updatedQuestion = await getQuestion(questionId)
+        if (updatedQuestion) setQuestion(updatedQuestion)
+      } catch (questionError) {
+        console.warn("Failed to refresh question after acceptance:", questionError)
+      }
+
+      try {
+        const updatedAnswers = await getAnswers(questionId)
+        setAnswers(updatedAnswers)
+      } catch (answersError) {
+        console.warn("Failed to refresh answers after acceptance:", answersError)
+      }
 
       toast({ title: "Success!", description: "Answer accepted" })
     } catch (error) {
@@ -327,84 +348,117 @@ export default function QuestionDetailPage() {
           <div>
             <h2 className="text-xl font-semibold mb-4">
               {answers.length} Answer{answers.length !== 1 ? "s" : ""}
+              {question.isAnswered && (
+                <span className="ml-2 text-sm text-green-600 font-normal">
+                  (Question has been answered)
+                </span>
+              )}
             </h2>
 
             <div className="space-y-6">
-              {answers.map((answer: any) => (
-                <Card key={answer.id} className={answer.isAccepted ? "border-green-500 bg-green-50" : ""}>
-                  <CardContent className="pt-6">
-                    <div className="flex space-x-4">
-                      {/* Vote Buttons */}
-                      <div className="flex flex-col items-center space-y-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleVote(answer.id, "answer", "up")}
-                          className={userVotes[answer.id] === "up" ? "text-orange-500 bg-orange-50" : ""}
-                        >
-                          <ArrowUp className="w-5 h-5" />
-                        </Button>
-                        <span className="text-lg font-semibold">{answer.upvotes || 0}</span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleVote(answer.id, "answer", "down")}
-                          className={userVotes[answer.id] === "down" ? "text-red-500 bg-red-50" : ""}
-                        >
-                          <ArrowDown className="w-5 h-5" />
-                        </Button>
-                        {answer.isAccepted && (
-                          <div className="flex items-center justify-center w-8 h-8 bg-green-500 rounded-full">
-                            <Check className="w-5 h-5 text-white" />
-                          </div>
-                        )}
-                        {user && question.authorId === user.uid && !answer.isAccepted && !question.isAnswered && (
+              {answers
+                .sort((a, b) => {
+                  // Sort by accepted status first (accepted answers at top)
+                  if (a.isAccepted && !b.isAccepted) return -1
+                  if (!a.isAccepted && b.isAccepted) return 1
+                  // Then sort by votes (higher votes first)
+                  const votesDiff = (b.upvotes || 0) - (a.upvotes || 0)
+                  if (votesDiff !== 0) return votesDiff
+                  // Finally sort by creation date (newer first)
+                  const aTime = a.createdAt?.toDate?.()?.getTime() || 0
+                  const bTime = b.createdAt?.toDate?.()?.getTime() || 0
+                  return bTime - aTime
+                })
+                .map((answer: any) => (
+                  <Card 
+                    key={answer.id} 
+                    className={
+                      answer.isAccepted 
+                        ? "border-2 border-green-500 bg-gradient-to-r from-green-50 to-green-25 shadow-lg" 
+                        : ""
+                    }
+                  >
+                    <CardContent className="pt-6">
+                      <div className="flex space-x-4">
+                        {/* Vote Buttons */}
+                        <div className="flex flex-col items-center space-y-2">
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleAcceptAnswer(answer.id, answer.authorId)}
-                            className="text-green-600 hover:text-green-700 hover:bg-green-50"
-                            title="Accept this answer"
+                            onClick={() => handleVote(answer.id, "answer", "up")}
+                            className={userVotes[answer.id] === "up" ? "text-orange-500 bg-orange-50" : ""}
                           >
-                            <Check className="w-5 h-5" />
+                            <ArrowUp className="w-5 h-5" />
                           </Button>
-                        )}
-                      </div>
+                          <span className="text-lg font-semibold">{answer.upvotes || 0}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleVote(answer.id, "answer", "down")}
+                            className={userVotes[answer.id] === "down" ? "text-red-500 bg-red-50" : ""}
+                          >
+                            <ArrowDown className="w-5 h-5" />
+                          </Button>
+                          {answer.isAccepted && (
+                            <div className="flex items-center justify-center w-8 h-8 bg-green-500 rounded-full shadow-md">
+                              <Check className="w-5 h-5 text-white" />
+                            </div>
+                          )}
+                          {user && question.authorId === user.uid && !answer.isAccepted && !question.isAnswered && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleAcceptAnswer(answer.id, answer.authorId)}
+                              className="text-green-600 hover:text-green-700 hover:bg-green-50 border border-green-200 hover:border-green-300"
+                              title="Accept this answer"
+                            >
+                              <Check className="w-5 h-5" />
+                            </Button>
+                          )}
+                        </div>
 
-                      {/* Answer Content */}
-                      <div className="flex-1">
-                        {answer.isAccepted && (
-                          <div className="flex items-center space-x-2 mb-4">
-                            <Check className="w-4 h-4 text-green-500" />
-                            <span className="text-sm font-medium text-green-700">Accepted Answer</span>
-                          </div>
-                        )}
+                        {/* Answer Content */}
+                        <div className="flex-1">
+                          {answer.isAccepted && (
+                            <div className="flex items-center space-x-2 mb-4 p-3 bg-green-100 rounded-lg border border-green-200">
+                              <Check className="w-5 h-5 text-green-600" />
+                              <span className="text-sm font-semibold text-green-800">✓ Accepted Answer</span>
+                              <span className="text-xs text-green-600 ml-auto">+15 reputation to author</span>
+                            </div>
+                          )}
 
-                        <div
-                          className="prose prose-sm max-w-none mb-6"
-                          dangerouslySetInnerHTML={{ __html: answer.content }}
-                        />
+                          <div
+                            className="prose prose-sm max-w-none mb-6"
+                            dangerouslySetInnerHTML={{ __html: answer.content }}
+                          />
 
-                        {/* Answer Author Info */}
-                        <div className="flex justify-end">
-                          <div className="flex items-center space-x-2 text-sm">
-                            <span className="text-gray-500">
-                              answered{" "}
-                              {formatDistanceToNow(answer.createdAt?.toDate?.() || new Date(), {
-                                addSuffix: true,
-                              })}
-                            </span>
-                            <Avatar className="w-6 h-6">
-                              <AvatarFallback>{answer.authorUsername?.charAt(0).toUpperCase() || "A"}</AvatarFallback>
-                            </Avatar>
-                            <span className="font-medium">{answer.authorUsername || "Anonymous"}</span>
+                          {/* Answer Author Info */}
+                          <div className="flex justify-between items-end">
+                            <div className="flex items-center space-x-2 text-sm text-gray-500">
+                              <span>
+                                {answer.upvotes > 0 && (
+                                  <span className="text-green-600 font-medium mr-2">
+                                    +{answer.upvotes} votes
+                                  </span>
+                                )}
+                                answered{" "}
+                                {formatDistanceToNow(answer.createdAt?.toDate?.() || new Date(), {
+                                  addSuffix: true,
+                                })}
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Avatar className="w-6 h-6">
+                                <AvatarFallback>{answer.authorUsername?.charAt(0).toUpperCase() || "A"}</AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium text-gray-900">{answer.authorUsername || "Anonymous"}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                ))}
             </div>
           </div>
 
@@ -413,11 +467,23 @@ export default function QuestionDetailPage() {
             <Card>
               <CardHeader>
                 <h3 className="text-lg font-semibold">Your Answer</h3>
+                {question.isAnswered && (
+                  <p className="text-sm text-green-600 bg-green-50 p-2 rounded">
+                    ℹ️ This question has been answered, but you can still provide additional insights!
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleSubmitAnswer} className="space-y-4">
                   <RichTextEditor content={newAnswer} onChange={setNewAnswer} placeholder="Write your answer here..." />
-                  <div className="flex justify-end">
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-gray-500">
+                      {question.authorId === user.uid && (
+                        <span className="text-blue-600 font-medium">
+                          💡 As the question author, you can accept the best answer
+                        </span>
+                      )}
+                    </div>
                     <Button
                       type="submit"
                       disabled={!newAnswer.trim() || submittingAnswer}
@@ -462,7 +528,21 @@ export default function QuestionDetailPage() {
               <div className="flex justify-between">
                 <span className="text-gray-600">Status</span>
                 <span className={`font-medium ${question.isAnswered ? "text-green-600" : "text-orange-600"}`}>
-                  {question.isAnswered ? "Answered" : "Open"}
+                  {question.isAnswered ? "✓ Answered" : "📝 Open"}
+                </span>
+              </div>
+              {question.isAnswered && question.acceptedAnswerId && (
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Accepted Answer</span>
+                  <span className="font-medium text-green-600">Yes</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-600">Activity</span>
+                <span className="font-medium text-gray-700">
+                  {formatDistanceToNow(question.updatedAt?.toDate?.() || question.createdAt?.toDate?.() || new Date(), {
+                    addSuffix: true,
+                  })}
                 </span>
               </div>
             </CardContent>

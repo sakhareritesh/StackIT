@@ -191,17 +191,64 @@ export const createAnswer = async (answerData: any) => {
 
 export const getAnswers = async (questionId: string) => {
   try {
+    // Try the optimized query first (requires composite index)
     const q = query(
       collection(db, "answers"),
       where("questionId", "==", questionId),
-      orderBy("isAccepted", "desc"), // Accepted answers first
-      orderBy("createdAt", "desc"),
+      orderBy("createdAt", "desc")
     )
     const querySnapshot = await getDocs(q)
-    return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+    const answers = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+    
+    // Sort answers to show accepted answers first, then by votes, then by date
+    return answers.sort((a: any, b: any) => {
+      // Accepted answers always come first
+      if (a.isAccepted && !b.isAccepted) return -1
+      if (!a.isAccepted && b.isAccepted) return 1
+      
+      // If both are accepted or both are not accepted, sort by votes
+      const aVotes = (a.upvotes || 0) - (a.downvotes || 0)
+      const bVotes = (b.upvotes || 0) - (b.downvotes || 0)
+      if (aVotes !== bVotes) return bVotes - aVotes
+      
+      // Finally sort by creation date (newer first)
+      const aTime = a.createdAt?.toDate?.()?.getTime() || 0
+      const bTime = b.createdAt?.toDate?.()?.getTime() || 0
+      return bTime - aTime
+    })
   } catch (error) {
     console.error("Error getting answers:", error)
-    throw error
+    
+    // Fallback: try simple query without orderBy (no index required)
+    try {
+      console.log("Falling back to simple query for answers...")
+      const fallbackQuery = query(
+        collection(db, "answers"),
+        where("questionId", "==", questionId)
+      )
+      const fallbackSnapshot = await getDocs(fallbackQuery)
+      const answers = fallbackSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+      
+      // Sort client-side
+      return answers.sort((a: any, b: any) => {
+        // Accepted answers always come first
+        if (a.isAccepted && !b.isAccepted) return -1
+        if (!a.isAccepted && b.isAccepted) return 1
+        
+        // If both are accepted or both are not accepted, sort by votes
+        const aVotes = (a.upvotes || 0) - (a.downvotes || 0)
+        const bVotes = (b.upvotes || 0) - (b.downvotes || 0)
+        if (aVotes !== bVotes) return bVotes - aVotes
+        
+        // Finally sort by creation date (newer first)
+        const aTime = a.createdAt?.toDate?.()?.getTime() || 0
+        const bTime = b.createdAt?.toDate?.()?.getTime() || 0
+        return bTime - aTime
+      })
+    } catch (fallbackError) {
+      console.error("Fallback query also failed:", fallbackError)
+      throw fallbackError
+    }
   }
 }
 
@@ -392,23 +439,32 @@ export const createNotification = async (notificationData: any) => {
     })
   } catch (error) {
     console.error("Error creating notification:", error)
-    throw error
+    // Don't throw error to prevent blocking main operations
+    console.warn("Notification creation failed, but continuing with main operation")
   }
 }
 
 export const getUserNotifications = async (userId: string) => {
   try {
+    // Simple query without ordering to avoid index requirement for now
     const q = query(
       collection(db, "notifications"),
       where("userId", "==", userId),
-      orderBy("createdAt", "desc"),
       limit(20),
     )
     const querySnapshot = await getDocs(q)
-    return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+    const notifications = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+    
+    // Sort manually to avoid composite index requirement
+    return notifications.sort((a: any, b: any) => {
+      const aTime = a.createdAt?.toDate?.()?.getTime() || 0
+      const bTime = b.createdAt?.toDate?.()?.getTime() || 0
+      return bTime - aTime
+    })
   } catch (error) {
     console.error("Error getting notifications:", error)
-    throw error
+    // Return empty array instead of throwing to prevent blocking
+    return []
   }
 }
 

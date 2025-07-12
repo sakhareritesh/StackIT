@@ -61,11 +61,11 @@ export default function UserProfilePage() {
           orderBy("createdAt", "desc"),
         )
         const answersSnapshot = await getDocs(answersQuery)
-        const answers = answersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+        const answers = answersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as any[]
 
         // Fetch question details for each answer
         const answersWithQuestions = await Promise.all(
-          answers.map(async (answer) => {
+          answers.map(async (answer: any) => {
             try {
               const questionQuery = query(collection(db, "questions"), where("__name__", "==", answer.questionId))
               const questionSnapshot = await getDocs(questionQuery)
