@@ -8,24 +8,28 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { User, Award, Bookmark, MessageSquare, TrendingUp, Camera } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { User, Award, Bookmark, MessageSquare, TrendingUp, Camera, Users, Star, Check } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { QuestionCard } from "@/components/question-card"
+import { getUserStats, getBookmarkedQuestions } from "@/lib/firestore-operations"
 import { collection, query, where, orderBy, getDocs, updateDoc, doc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { toast } from "@/hooks/use-toast"
-import { Check } from "lucide-react"
+import { formatDistanceToNow } from "date-fns"
 
 export default function ProfilePage() {
   const { user, userProfile } = useAuth()
   const [userQuestions, setUserQuestions] = useState<any[]>([])
   const [userAnswers, setUserAnswers] = useState<any[]>([])
   const [bookmarkedQuestions, setBookmarkedQuestions] = useState<any[]>([])
+  const [userStats, setUserStats] = useState<any>({})
   const [loading, setLoading] = useState(true)
   const [editingProfile, setEditingProfile] = useState(false)
   const [profileData, setProfileData] = useState({
     username: "",
     avatar: "",
+    bio: "",
   })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -34,6 +38,7 @@ export default function ProfilePage() {
       setProfileData({
         username: userProfile.username || "",
         avatar: userProfile.avatar || "",
+        bio: userProfile.bio || "",
       })
     }
   }, [userProfile])
@@ -43,6 +48,12 @@ export default function ProfilePage() {
       if (!user || !userProfile) return
 
       try {
+        setLoading(true)
+
+        // Fetch user statistics
+        const stats = await getUserStats(user.uid)
+        setUserStats(stats)
+
         // Fetch user's questions
         const questionsQuery = query(
           collection(db, "questions"),
@@ -53,7 +64,7 @@ export default function ProfilePage() {
         const questions = questionsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
         setUserQuestions(questions)
 
-        // Fetch user's answers
+        // Fetch user's answers with question details
         const answersQuery = query(
           collection(db, "answers"),
           where("authorId", "==", user.uid),
@@ -61,27 +72,37 @@ export default function ProfilePage() {
         )
         const answersSnapshot = await getDocs(answersQuery)
         const answers = answersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-        setUserAnswers(answers)
+
+        // Fetch question details for each answer
+        const answersWithQuestions = await Promise.all(
+          answers.map(async (answer) => {
+            try {
+              const questionQuery = query(collection(db, "questions"), where("__name__", "==", answer.questionId))
+              const questionSnapshot = await getDocs(questionQuery)
+              const questionData = questionSnapshot.docs[0]?.data()
+              return {
+                ...answer,
+                questionTitle: questionData?.title || "Question not found",
+                questionId: answer.questionId,
+              }
+            } catch (error) {
+              console.error("Error fetching question for answer:", error)
+              return {
+                ...answer,
+                questionTitle: "Question not found",
+                questionId: answer.questionId,
+              }
+            }
+          }),
+        )
+        setUserAnswers(answersWithQuestions)
 
         // Fetch bookmarked questions
-        if (userProfile.bookmarks && userProfile.bookmarks.length > 0) {
-          const bookmarksPromises = userProfile.bookmarks.map(async (questionId: string) => {
-            try {
-              const questionQuery = query(collection(db, "questions"), where("__name__", "==", questionId))
-              const questionSnapshot = await getDocs(questionQuery)
-              return questionSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-            } catch (error) {
-              console.error(`Error fetching question ${questionId}:`, error)
-              return []
-            }
-          })
-
-          const bookmarksResults = await Promise.all(bookmarksPromises)
-          const bookmarks = bookmarksResults.flat()
-          setBookmarkedQuestions(bookmarks)
-        }
+        const bookmarks = await getBookmarkedQuestions(user.uid)
+        setBookmarkedQuestions(bookmarks)
       } catch (error) {
         console.error("Error fetching user data:", error)
+        toast({ title: "Error", description: "Failed to load profile data", variant: "destructive" })
       } finally {
         setLoading(false)
       }
@@ -125,6 +146,7 @@ export default function ProfilePage() {
       await updateDoc(doc(db, "users", user.uid), {
         username: profileData.username,
         avatar: profileData.avatar,
+        bio: profileData.bio,
       })
 
       setEditingProfile(false)
@@ -159,13 +181,6 @@ export default function ProfilePage() {
         </div>
       </div>
     )
-  }
-
-  const stats = {
-    questions: userQuestions.length,
-    answers: userAnswers.length,
-    karma: userProfile?.karma || 0,
-    badges: userProfile?.badges?.length || 0,
   }
 
   return (
@@ -203,6 +218,11 @@ export default function ProfilePage() {
                     placeholder="Username"
                     className="text-2xl font-bold"
                   />
+                  <Input
+                    value={profileData.bio}
+                    onChange={(e) => setProfileData((prev) => ({ ...prev, bio: e.target.value }))}
+                    placeholder="Bio"
+                  />
                   <div className="flex space-x-2">
                     <Button onClick={handleSaveProfile} className="bg-orange-500 hover:bg-orange-600">
                       Save Changes
@@ -215,11 +235,19 @@ export default function ProfilePage() {
               ) : (
                 <>
                   <h1 className="text-3xl font-bold text-gray-900 mb-2">{userProfile?.username || "User"}</h1>
-                  <p className="text-gray-600 mb-4">{user.email}</p>
-                  <div className="flex items-center space-x-4 text-sm text-gray-500">
+                  <p className="text-gray-600 mb-2">{user.email}</p>
+                  {profileData.bio && <p className="text-gray-700 mb-4">{profileData.bio}</p>}
+                  <div className="flex items-center space-x-4 text-sm text-gray-500 mb-4">
                     <span>Member since {userProfile?.createdAt?.toDate?.()?.toLocaleDateString() || "Recently"}</span>
                     <span>•</span>
-                    <span>{stats.karma} karma points</span>
+                    <span>{userStats.karma || 0} karma points</span>
+                    <span>•</span>
+                    <div className="flex items-center space-x-1">
+                      <Users className="w-4 h-4" />
+                      <span>{userStats.followerCount || 0} followers</span>
+                    </div>
+                    <span>•</span>
+                    <span>{userStats.followingCount || 0} following</span>
                   </div>
                 </>
               )}
@@ -237,33 +265,47 @@ export default function ProfilePage() {
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-6 mb-8">
         <Card>
           <CardContent className="pt-6 text-center">
             <MessageSquare className="w-8 h-8 text-orange-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{stats.questions}</h3>
+            <h3 className="text-2xl font-bold">{userStats.questionsCount || 0}</h3>
             <p className="text-gray-600">Questions</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center">
             <TrendingUp className="w-8 h-8 text-blue-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{stats.answers}</h3>
+            <h3 className="text-2xl font-bold">{userStats.answersCount || 0}</h3>
             <p className="text-gray-600">Answers</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center">
-            <Award className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{stats.karma}</h3>
+            <Check className="w-8 h-8 text-green-500 mx-auto mb-2" />
+            <h3 className="text-2xl font-bold">{userStats.acceptedAnswers || 0}</h3>
+            <p className="text-gray-600">Accepted</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6 text-center">
+            <Star className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
+            <h3 className="text-2xl font-bold">{userStats.karma || 0}</h3>
             <p className="text-gray-600">Karma</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center">
-            <Bookmark className="w-8 h-8 text-green-500 mx-auto mb-2" />
+            <Bookmark className="w-8 h-8 text-purple-500 mx-auto mb-2" />
             <h3 className="text-2xl font-bold">{bookmarkedQuestions.length}</h3>
             <p className="text-gray-600">Bookmarks</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6 text-center">
+            <Award className="w-8 h-8 text-indigo-500 mx-auto mb-2" />
+            <h3 className="text-2xl font-bold">{userStats.badges?.length || 0}</h3>
+            <p className="text-gray-600">Badges</p>
           </CardContent>
         </Card>
       </div>
@@ -271,10 +313,10 @@ export default function ProfilePage() {
       {/* Content Tabs */}
       <Tabs defaultValue="questions" className="space-y-6">
         <TabsList>
-          <TabsTrigger value="questions">My Questions ({stats.questions})</TabsTrigger>
-          <TabsTrigger value="answers">My Answers ({stats.answers})</TabsTrigger>
+          <TabsTrigger value="questions">My Questions ({userStats.questionsCount || 0})</TabsTrigger>
+          <TabsTrigger value="answers">My Answers ({userStats.answersCount || 0})</TabsTrigger>
           <TabsTrigger value="bookmarks">Bookmarks ({bookmarkedQuestions.length})</TabsTrigger>
-          <TabsTrigger value="badges">Badges ({stats.badges})</TabsTrigger>
+          <TabsTrigger value="badges">Badges ({userStats.badges?.length || 0})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="questions" className="space-y-4">
@@ -283,6 +325,7 @@ export default function ProfilePage() {
           ) : (
             <Card>
               <CardContent className="pt-6 text-center">
+                <MessageSquare className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-600 mb-4">You haven't asked any questions yet.</p>
                 <Button className="bg-orange-500 hover:bg-orange-600">Ask Your First Question</Button>
               </CardContent>
@@ -294,7 +337,7 @@ export default function ProfilePage() {
           {userAnswers.length > 0 ? (
             <div className="space-y-4">
               {userAnswers.map((answer) => (
-                <Card key={answer.id}>
+                <Card key={answer.id} className={answer.isAccepted ? "border-green-500 bg-green-50" : ""}>
                   <CardContent className="pt-6">
                     <div className="flex items-start space-x-4">
                       <div className="flex flex-col items-center space-y-1">
@@ -307,13 +350,27 @@ export default function ProfilePage() {
                         )}
                       </div>
                       <div className="flex-1">
+                        {answer.isAccepted && (
+                          <div className="flex items-center space-x-2 mb-2">
+                            <Check className="w-4 h-4 text-green-500" />
+                            <Badge variant="secondary" className="bg-green-100 text-green-800">
+                              Accepted Answer
+                            </Badge>
+                          </div>
+                        )}
+                        <h4 className="font-semibold text-blue-600 hover:text-blue-800 mb-2">
+                          <a href={`/questions/${answer.questionId}`}>{answer.questionTitle}</a>
+                        </h4>
                         <div
                           className="prose prose-sm max-w-none mb-4"
                           dangerouslySetInnerHTML={{ __html: answer.content }}
                         />
                         <div className="text-sm text-gray-500">
-                          Answered {answer.createdAt?.toDate?.()?.toLocaleDateString() || "recently"}
-                          {answer.isAccepted && <span className="text-green-600 ml-2">• Accepted Answer</span>}
+                          Answered{" "}
+                          {formatDistanceToNow(answer.createdAt?.toDate?.() || new Date(), { addSuffix: true })}
+                          {answer.isAccepted && (
+                            <span className="text-green-600 ml-2">• Accepted Answer (+15 karma)</span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -324,6 +381,7 @@ export default function ProfilePage() {
           ) : (
             <Card>
               <CardContent className="pt-6 text-center">
+                <TrendingUp className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-600">You haven't answered any questions yet.</p>
               </CardContent>
             </Card>
@@ -336,6 +394,7 @@ export default function ProfilePage() {
           ) : (
             <Card>
               <CardContent className="pt-6 text-center">
+                <Bookmark className="w-16 h-16 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-600">You haven't bookmarked any questions yet.</p>
               </CardContent>
             </Card>
@@ -345,16 +404,19 @@ export default function ProfilePage() {
         <TabsContent value="badges" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Your Badges</CardTitle>
+              <CardTitle>Your Badges & Achievements</CardTitle>
             </CardHeader>
             <CardContent>
-              {userProfile?.badges && userProfile.badges.length > 0 ? (
+              {userStats.badges && userStats.badges.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {userProfile.badges.map((badge, index) => (
-                    <div key={index} className="flex items-center space-x-3 p-3 border rounded-lg">
+                  {userStats.badges.map((badge: string, index: number) => (
+                    <div
+                      key={index}
+                      className="flex items-center space-x-3 p-4 border rounded-lg bg-gradient-to-r from-yellow-50 to-orange-50"
+                    >
                       <Award className="w-8 h-8 text-yellow-500" />
                       <div>
-                        <h4 className="font-semibold">{badge}</h4>
+                        <h4 className="font-semibold text-gray-900">{badge}</h4>
                         <p className="text-sm text-gray-600">Achievement unlocked</p>
                       </div>
                     </div>
@@ -363,8 +425,12 @@ export default function ProfilePage() {
               ) : (
                 <div className="text-center py-8">
                   <Award className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-600">No badges earned yet.</p>
-                  <p className="text-sm text-gray-500 mt-2">Participate in the community to earn badges!</p>
+                  <p className="text-gray-600 mb-2">No badges earned yet.</p>
+                  <p className="text-sm text-gray-500">Participate in the community to earn badges!</p>
+                  <div className="mt-4 text-sm text-gray-600">
+                    <p>• Ask your first question to earn "First Contribution"</p>
+                    <p>• Get your first answer accepted to earn "First Accepted Answer"</p>
+                  </div>
                 </div>
               )}
             </CardContent>
