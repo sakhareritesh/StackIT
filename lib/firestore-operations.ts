@@ -14,6 +14,7 @@ import {
   arrayUnion,
   arrayRemove,
   writeBatch,
+  setDoc,
 } from "firebase/firestore"
 import { db } from "./firebase"
 
@@ -53,6 +54,48 @@ export const updateUserProfile = async (uid: string, updates: any) => {
   }
 }
 
+// Badge operations
+export const awardBadge = async (userId: string, badgeName: string) => {
+  try {
+    const userRef = doc(db, "users", userId)
+    const userDoc = await getDoc(userRef)
+
+    if (userDoc.exists()) {
+      const userData = userDoc.data()
+      const currentBadges = userData.badges || []
+
+      if (!currentBadges.includes(badgeName)) {
+        await updateDoc(userRef, {
+          badges: arrayUnion(badgeName),
+          updatedAt: serverTimestamp(),
+        })
+        return true
+      }
+    }
+    return false
+  } catch (error) {
+    console.error("Error awarding badge:", error)
+    throw error
+  }
+}
+
+// Check and award first contribution badge
+export const checkFirstContribution = async (userId: string) => {
+  try {
+    // Check if user has any questions or answers
+    const questionsQuery = query(collection(db, "questions"), where("authorId", "==", userId), limit(1))
+    const answersQuery = query(collection(db, "answers"), where("authorId", "==", userId), limit(1))
+
+    const [questionsSnapshot, answersSnapshot] = await Promise.all([getDocs(questionsQuery), getDocs(answersQuery)])
+
+    if (questionsSnapshot.size > 0 || answersSnapshot.size > 0) {
+      await awardBadge(userId, "First Contribution")
+    }
+  } catch (error) {
+    console.error("Error checking first contribution:", error)
+  }
+}
+
 // Question operations
 export const createQuestion = async (questionData: any) => {
   try {
@@ -61,6 +104,10 @@ export const createQuestion = async (questionData: any) => {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })
+
+    // Check for first contribution badge
+    await checkFirstContribution(questionData.authorId)
+
     return docRef.id
   } catch (error) {
     console.error("Error creating question:", error)
@@ -126,6 +173,9 @@ export const createAnswer = async (answerData: any) => {
       updatedAt: serverTimestamp(),
     })
 
+    // Check for first contribution badge
+    await checkFirstContribution(answerData.authorId)
+
     return docRef.id
   } catch (error) {
     console.error("Error creating answer:", error)
@@ -135,7 +185,12 @@ export const createAnswer = async (answerData: any) => {
 
 export const getAnswers = async (questionId: string) => {
   try {
-    const q = query(collection(db, "answers"), where("questionId", "==", questionId), orderBy("createdAt", "desc"))
+    const q = query(
+      collection(db, "answers"),
+      where("questionId", "==", questionId),
+      orderBy("isAccepted", "desc"), // Accepted answers first
+      orderBy("createdAt", "desc"),
+    )
     const querySnapshot = await getDocs(q)
     return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
   } catch (error) {
@@ -160,6 +215,18 @@ export const acceptAnswer = async (questionId: string, answerId: string, authorI
   try {
     const batch = writeBatch(db)
 
+    // First, unaccept any previously accepted answers for this question
+    const existingAnswersQuery = query(
+      collection(db, "answers"),
+      where("questionId", "==", questionId),
+      where("isAccepted", "==", true),
+    )
+    const existingAnswersSnapshot = await getDocs(existingAnswersQuery)
+
+    existingAnswersSnapshot.docs.forEach((doc) => {
+      batch.update(doc.ref, { isAccepted: false })
+    })
+
     // Update question
     batch.update(doc(db, "questions", questionId), {
       acceptedAnswerId: answerId,
@@ -176,16 +243,99 @@ export const acceptAnswer = async (questionId: string, answerId: string, authorI
     // Award karma to answer author
     batch.update(doc(db, "users", authorId), {
       karma: increment(15),
+      acceptedAnswers: increment(1),
     })
 
     await batch.commit()
+
+    // Award badge for first accepted answer
+    await awardBadge(authorId, "First Accepted Answer")
   } catch (error) {
     console.error("Error accepting answer:", error)
     throw error
   }
 }
 
-// Vote operations
+// Vote operations - Updated to handle single vote per user
+export const handleUserVote = async (
+  userId: string,
+  targetId: string,
+  targetType: "question" | "answer",
+  voteType: "up" | "down",
+) => {
+  try {
+    const voteId = `${userId}_${targetId}`
+    const voteRef = doc(db, "votes", voteId)
+    const voteDoc = await getDoc(voteRef)
+
+    const collectionName = targetType === "question" ? "questions" : "answers"
+    const targetRef = doc(db, collectionName, targetId)
+
+    let voteChange = 0
+    let newVoteType = null
+
+    if (voteDoc.exists()) {
+      const currentVote = voteDoc.data()
+      if (currentVote.type === voteType) {
+        // Remove vote if clicking same button
+        await updateDoc(voteRef, { type: null })
+        voteChange = voteType === "up" ? -1 : 1
+        newVoteType = null
+      } else {
+        // Change vote type
+        await updateDoc(voteRef, { type: voteType })
+        if (currentVote.type === "up" && voteType === "down") {
+          voteChange = -2
+        } else if (currentVote.type === "down" && voteType === "up") {
+          voteChange = 2
+        }
+        newVoteType = voteType
+      }
+    } else {
+      // Create new vote
+      await setDoc(voteRef, {
+        userId,
+        targetId,
+        targetType,
+        type: voteType,
+        createdAt: serverTimestamp(),
+      })
+      voteChange = voteType === "up" ? 1 : -1
+      newVoteType = voteType
+    }
+
+    // Update vote count
+    if (voteChange !== 0) {
+      await updateDoc(targetRef, {
+        upvotes: increment(voteChange),
+      })
+    }
+
+    return newVoteType
+  } catch (error) {
+    console.error("Error handling vote:", error)
+    throw error
+  }
+}
+
+// Get all user votes for multiple targets
+export const getUserVotes = async (userId: string, targetIds: string[]) => {
+  try {
+    const votes: Record<string, string | null> = {}
+
+    for (const targetId of targetIds) {
+      const voteId = `${userId}_${targetId}`
+      const voteDoc = await getDoc(doc(db, "votes", voteId))
+      votes[targetId] = voteDoc.exists() ? voteDoc.data()?.type || null : null
+    }
+
+    return votes
+  } catch (error) {
+    console.error("Error getting user votes:", error)
+    return {}
+  }
+}
+
 export const createVote = async (voteData: any) => {
   try {
     const voteId = `${voteData.userId}_${voteData.targetId}`
@@ -326,7 +476,7 @@ export const createOrUpdateTag = async (tagName: string) => {
   }
 }
 
-// Bookmark operations
+// Bookmark operations - Fixed
 export const toggleBookmark = async (userId: string, questionId: string) => {
   try {
     const userRef = doc(db, "users", userId)
@@ -350,8 +500,40 @@ export const toggleBookmark = async (userId: string, questionId: string) => {
         return true
       }
     }
+    return false
   } catch (error) {
     console.error("Error toggling bookmark:", error)
+    throw error
+  }
+}
+
+// Get bookmarked questions
+export const getBookmarkedQuestions = async (userId: string) => {
+  try {
+    const userDoc = await getDoc(doc(db, "users", userId))
+    if (!userDoc.exists()) return []
+
+    const userData = userDoc.data()
+    const bookmarks = userData.bookmarks || []
+
+    if (bookmarks.length === 0) return []
+
+    // Fetch all bookmarked questions
+    const bookmarkedQuestions = []
+    for (const questionId of bookmarks) {
+      try {
+        const questionDoc = await getDoc(doc(db, "questions", questionId))
+        if (questionDoc.exists()) {
+          bookmarkedQuestions.push({ id: questionDoc.id, ...questionDoc.data() })
+        }
+      } catch (error) {
+        console.error(`Error fetching question ${questionId}:`, error)
+      }
+    }
+
+    return bookmarkedQuestions
+  } catch (error) {
+    console.error("Error getting bookmarked questions:", error)
     throw error
   }
 }
@@ -359,6 +541,18 @@ export const toggleBookmark = async (userId: string, questionId: string) => {
 // Follow operations
 export const followUser = async (followerId: string, followingId: string) => {
   try {
+    // Check if already following
+    const followQuery = query(
+      collection(db, "follows"),
+      where("followerId", "==", followerId),
+      where("followingId", "==", followingId),
+    )
+    const followSnapshot = await getDocs(followQuery)
+
+    if (!followSnapshot.empty) {
+      return false // Already following
+    }
+
     await addDoc(collection(db, "follows"), {
       followerId,
       followingId,
@@ -373,9 +567,61 @@ export const followUser = async (followerId: string, followingId: string) => {
     await updateDoc(doc(db, "users", followingId), {
       followerCount: increment(1),
     })
+
+    return true
   } catch (error) {
     console.error("Error following user:", error)
     throw error
+  }
+}
+
+export const unfollowUser = async (followerId: string, followingId: string) => {
+  try {
+    const followQuery = query(
+      collection(db, "follows"),
+      where("followerId", "==", followerId),
+      where("followingId", "==", followingId),
+    )
+    const followSnapshot = await getDocs(followQuery)
+
+    if (followSnapshot.empty) {
+      return false // Not following
+    }
+
+    // Delete the follow relationship
+    const batch = writeBatch(db)
+    followSnapshot.docs.forEach((doc) => {
+      batch.delete(doc.ref)
+    })
+
+    // Update follower counts
+    batch.update(doc(db, "users", followerId), {
+      followingCount: increment(-1),
+    })
+    batch.update(doc(db, "users", followingId), {
+      followerCount: increment(-1),
+    })
+
+    await batch.commit()
+    return true
+  } catch (error) {
+    console.error("Error unfollowing user:", error)
+    throw error
+  }
+}
+
+export const isFollowing = async (followerId: string, followingId: string) => {
+  try {
+    const followQuery = query(
+      collection(db, "follows"),
+      where("followerId", "==", followerId),
+      where("followingId", "==", followingId),
+    )
+    const followSnapshot = await getDocs(followQuery)
+    return !followSnapshot.empty
+  } catch (error) {
+    console.error("Error checking follow status:", error)
+    return false
   }
 }
 
@@ -389,6 +635,44 @@ export const followTag = async (userId: string, tagName: string) => {
     })
   } catch (error) {
     console.error("Error following tag:", error)
+    throw error
+  }
+}
+
+// Get user statistics
+export const getUserStats = async (userId: string) => {
+  try {
+    const [questionsSnapshot, answersSnapshot, userDoc] = await Promise.all([
+      getDocs(query(collection(db, "questions"), where("authorId", "==", userId))),
+      getDocs(query(collection(db, "answers"), where("authorId", "==", userId))),
+      getDoc(doc(db, "users", userId)),
+    ])
+
+    const questions = questionsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+    const answers = answersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+    const userData = userDoc.exists() ? userDoc.data() : {}
+
+    const acceptedAnswers = answers.filter((answer) => answer.isAccepted).length
+    const totalViews = questions.reduce((sum, question) => sum + (question.views || 0), 0)
+    const totalUpvotes = [...questions.map((q) => q.upvotes || 0), ...answers.map((a) => a.upvotes || 0)].reduce(
+      (sum, votes) => sum + votes,
+      0,
+    )
+
+    return {
+      questionsCount: questions.length,
+      answersCount: answers.length,
+      acceptedAnswers,
+      totalViews,
+      totalUpvotes,
+      karma: userData.karma || 0,
+      badges: userData.badges || [],
+      followerCount: userData.followerCount || 0,
+      followingCount: userData.followingCount || 0,
+      bookmarks: userData.bookmarks || [],
+    }
+  } catch (error) {
+    console.error("Error getting user stats:", error)
     throw error
   }
 }
