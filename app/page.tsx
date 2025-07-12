@@ -11,6 +11,7 @@ import { QuestionCard } from "@/components/question-card"
 import { useQuestions } from "@/hooks/use-questions"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { Footer } from "@/components/footer"
 
 const popularTags = [
   "javascript",
@@ -40,7 +41,7 @@ export default function HomePage() {
   const stats = {
     totalQuestions: questions.length || 0,
     totalAnswers: questions.reduce((acc, q) => acc + (q.answerCount || 0), 0),
-    totalUsers: 1250, // This would come from a separate query in production
+    totalUsers: 1150, // This would come from a separate query in production
   }
 
   return (
@@ -214,6 +215,7 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+      <Footer />
     </div>
   )
 }

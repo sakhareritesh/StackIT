@@ -47,33 +47,13 @@ export function Footer() {
               <Link href="/help" className="block text-sm text-gray-600 hover:text-orange-600">
                 Help Center
               </Link>
-              <Link href="/guidelines" className="block text-sm text-gray-600 hover:text-orange-600">
-                Community Guidelines
-              </Link>
-              <Link href="/contact" className="block text-sm text-gray-600 hover:text-orange-600">
-                Contact Us
-              </Link>
-              <Link href="/feedback" className="block text-sm text-gray-600 hover:text-orange-600">
-                Feedback
+              <Link href="/about" className="block text-sm text-gray-600 hover:text-orange-600">
+                About Us
               </Link>
             </div>
           </div>
 
-          {/* Legal */}
-          <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">Legal</h3>
-            <div className="space-y-2">
-              <Link href="/privacy" className="block text-sm text-gray-600 hover:text-orange-600">
-                Privacy Policy
-              </Link>
-              <Link href="/terms" className="block text-sm text-gray-600 hover:text-orange-600">
-                Terms of Service
-              </Link>
-              <Link href="/cookies" className="block text-sm text-gray-600 hover:text-orange-600">
-                Cookie Policy
-              </Link>
-            </div>
-          </div>
+        
         </div>
 
         <Separator className="my-8" />
