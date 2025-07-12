@@ -138,6 +138,18 @@ export function Navbar() {
                       </Link>
                     </DropdownMenuItem>
                     <DropdownMenuItem asChild>
+                      <Link href="/leaderboard" className="flex items-center">
+                        <div className="w-4 h-4 mr-2">🏆</div>
+                        Leaderboard
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href="/users" className="flex items-center">
+                        <User className="w-4 h-4 mr-2" />
+                        Users
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
                       <Link href="/settings" className="flex items-center">
                         <Settings className="w-4 h-4 mr-2" />
                         Settings
