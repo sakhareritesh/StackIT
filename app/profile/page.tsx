@@ -19,7 +19,7 @@ import { toast } from "@/hooks/use-toast"
 import { formatDistanceToNow } from "date-fns"
 
 export default function ProfilePage() {
-  const { user, userProfile } = useAuth()
+  const { user, userProfile, refreshProfile } = useAuth()
   const [userQuestions, setUserQuestions] = useState<any[]>([])
   const [userAnswers, setUserAnswers] = useState<any[]>([])
   const [bookmarkedQuestions, setBookmarkedQuestions] = useState<any[]>([])
@@ -152,8 +152,8 @@ export default function ProfilePage() {
       setEditingProfile(false)
       toast({ title: "Success!", description: "Profile updated successfully" })
 
-      // Refresh the page to show updated data
-      window.location.reload()
+      // Refresh profile data without page reload
+      await refreshProfile()
     } catch (error) {
       console.error("Error updating profile:", error)
       toast({ title: "Error", description: "Failed to update profile", variant: "destructive" })
@@ -240,14 +240,14 @@ export default function ProfilePage() {
                   <div className="flex items-center space-x-4 text-sm text-gray-500 mb-4">
                     <span>Member since {userProfile?.createdAt?.toDate?.()?.toLocaleDateString() || "Recently"}</span>
                     <span>•</span>
-                    <span>{userStats.karma || 0} karma points</span>
+                    <span>{userProfile?.karma || 0} karma points</span>
                     <span>•</span>
                     <div className="flex items-center space-x-1">
                       <Users className="w-4 h-4" />
-                      <span>{userStats.followerCount || 0} followers</span>
+                      <span>{userProfile?.followerCount || 0} followers</span>
                     </div>
                     <span>•</span>
-                    <span>{userStats.followingCount || 0} following</span>
+                    <span>{userProfile?.followingCount || 0} following</span>
                   </div>
                 </>
               )}
@@ -290,7 +290,7 @@ export default function ProfilePage() {
         <Card>
           <CardContent className="pt-6 text-center">
             <Star className="w-8 h-8 text-yellow-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{userStats.karma || 0}</h3>
+            <h3 className="text-2xl font-bold">{userProfile?.karma || 0}</h3>
             <p className="text-gray-600">Karma</p>
           </CardContent>
         </Card>
@@ -304,7 +304,7 @@ export default function ProfilePage() {
         <Card>
           <CardContent className="pt-6 text-center">
             <Award className="w-8 h-8 text-indigo-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{userStats.badges?.length || 0}</h3>
+            <h3 className="text-2xl font-bold">{userProfile?.badges?.length || 0}</h3>
             <p className="text-gray-600">Badges</p>
           </CardContent>
         </Card>
@@ -316,7 +316,7 @@ export default function ProfilePage() {
           <TabsTrigger value="questions">My Questions ({userStats.questionsCount || 0})</TabsTrigger>
           <TabsTrigger value="answers">My Answers ({userStats.answersCount || 0})</TabsTrigger>
           <TabsTrigger value="bookmarks">Bookmarks ({bookmarkedQuestions.length})</TabsTrigger>
-          <TabsTrigger value="badges">Badges ({userStats.badges?.length || 0})</TabsTrigger>
+          <TabsTrigger value="badges">Badges ({userProfile?.badges?.length || 0})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="questions" className="space-y-4">
@@ -407,9 +407,9 @@ export default function ProfilePage() {
               <CardTitle>Your Badges & Achievements</CardTitle>
             </CardHeader>
             <CardContent>
-              {userStats.badges && userStats.badges.length > 0 ? (
+              {userProfile?.badges && userProfile.badges.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {userStats.badges.map((badge: string, index: number) => (
+                  {userProfile.badges.map((badge: string, index: number) => (
                     <div
                       key={index}
                       className="flex items-center space-x-3 p-4 border rounded-lg bg-gradient-to-r from-yellow-50 to-orange-50"
