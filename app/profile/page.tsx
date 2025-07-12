@@ -1,15 +1,20 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import type React from "react"
+
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { User, Award, Bookmark, MessageSquare, TrendingUp } from "lucide-react"
+import { User, Award, Bookmark, MessageSquare, TrendingUp, Camera } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { QuestionCard } from "@/components/question-card"
-import { collection, query, where, orderBy, getDocs } from "firebase/firestore"
+import { collection, query, where, orderBy, getDocs, updateDoc, doc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
+import { toast } from "@/hooks/use-toast"
+import { Check } from "lucide-react"
 
 export default function ProfilePage() {
   const { user, userProfile } = useAuth()
@@ -17,6 +22,21 @@ export default function ProfilePage() {
   const [userAnswers, setUserAnswers] = useState<any[]>([])
   const [bookmarkedQuestions, setBookmarkedQuestions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [editingProfile, setEditingProfile] = useState(false)
+  const [profileData, setProfileData] = useState({
+    username: "",
+    avatar: "",
+  })
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (userProfile) {
+      setProfileData({
+        username: userProfile.username || "",
+        avatar: userProfile.avatar || "",
+      })
+    }
+  }, [userProfile])
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -45,9 +65,19 @@ export default function ProfilePage() {
 
         // Fetch bookmarked questions
         if (userProfile.bookmarks && userProfile.bookmarks.length > 0) {
-          const bookmarksQuery = query(collection(db, "questions"), where("__name__", "in", userProfile.bookmarks))
-          const bookmarksSnapshot = await getDocs(bookmarksQuery)
-          const bookmarks = bookmarksSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+          const bookmarksPromises = userProfile.bookmarks.map(async (questionId: string) => {
+            try {
+              const questionQuery = query(collection(db, "questions"), where("__name__", "==", questionId))
+              const questionSnapshot = await getDocs(questionQuery)
+              return questionSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+            } catch (error) {
+              console.error(`Error fetching question ${questionId}:`, error)
+              return []
+            }
+          })
+
+          const bookmarksResults = await Promise.all(bookmarksPromises)
+          const bookmarks = bookmarksResults.flat()
           setBookmarkedQuestions(bookmarks)
         }
       } catch (error) {
@@ -59,6 +89,54 @@ export default function ProfilePage() {
 
     fetchUserData()
   }, [user, userProfile])
+
+  const convertToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.readAsDataURL(file)
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = (error) => reject(error)
+    })
+  }
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !user) return
+
+    // Check file size (limit to 500KB for avatar)
+    if (file.size > 500 * 1024) {
+      toast({ title: "Error", description: "Image size should be less than 500KB", variant: "destructive" })
+      return
+    }
+
+    try {
+      const base64String = await convertToBase64(file)
+      setProfileData((prev) => ({ ...prev, avatar: base64String }))
+    } catch (error) {
+      console.error("Error converting image:", error)
+      toast({ title: "Error", description: "Failed to process image", variant: "destructive" })
+    }
+  }
+
+  const handleSaveProfile = async () => {
+    if (!user || !userProfile) return
+
+    try {
+      await updateDoc(doc(db, "users", user.uid), {
+        username: profileData.username,
+        avatar: profileData.avatar,
+      })
+
+      setEditingProfile(false)
+      toast({ title: "Success!", description: "Profile updated successfully" })
+
+      // Refresh the page to show updated data
+      window.location.reload()
+    } catch (error) {
+      console.error("Error updating profile:", error)
+      toast({ title: "Error", description: "Failed to update profile", variant: "destructive" })
+    }
+  }
 
   if (!user) {
     return (
@@ -96,28 +174,67 @@ export default function ProfilePage() {
       <Card className="mb-8">
         <CardContent className="pt-6">
           <div className="flex items-center space-x-6">
-            <Avatar className="w-24 h-24">
-              <AvatarImage src={userProfile?.avatar || user.photoURL || ""} />
-              <AvatarFallback className="text-2xl">
-                {userProfile?.username?.charAt(0).toUpperCase() || "U"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex-1">
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">{userProfile?.username || "User"}</h1>
-              <p className="text-gray-600 mb-4">{user.email}</p>
-              <div className="flex items-center space-x-4 text-sm text-gray-500">
-                <span>Member since {userProfile?.createdAt?.toDate?.()?.toLocaleDateString() || "Recently"}</span>
-                <span>•</span>
-                <span>{stats.karma} karma points</span>
-              </div>
+            <div className="relative">
+              <Avatar className="w-24 h-24">
+                <AvatarImage src={profileData.avatar || userProfile?.avatar || user.photoURL || ""} />
+                <AvatarFallback className="text-2xl">
+                  {profileData.username?.charAt(0).toUpperCase() ||
+                    userProfile?.username?.charAt(0).toUpperCase() ||
+                    "U"}
+                </AvatarFallback>
+              </Avatar>
+              {editingProfile && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="absolute -bottom-2 -right-2 rounded-full w-8 h-8 p-0 bg-transparent"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Camera className="w-4 h-4" />
+                </Button>
+              )}
             </div>
-            <Button variant="outline">
-              <User className="w-4 h-4 mr-2" />
-              Edit Profile
-            </Button>
+            <div className="flex-1">
+              {editingProfile ? (
+                <div className="space-y-4">
+                  <Input
+                    value={profileData.username}
+                    onChange={(e) => setProfileData((prev) => ({ ...prev, username: e.target.value }))}
+                    placeholder="Username"
+                    className="text-2xl font-bold"
+                  />
+                  <div className="flex space-x-2">
+                    <Button onClick={handleSaveProfile} className="bg-orange-500 hover:bg-orange-600">
+                      Save Changes
+                    </Button>
+                    <Button variant="outline" onClick={() => setEditingProfile(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h1 className="text-3xl font-bold text-gray-900 mb-2">{userProfile?.username || "User"}</h1>
+                  <p className="text-gray-600 mb-4">{user.email}</p>
+                  <div className="flex items-center space-x-4 text-sm text-gray-500">
+                    <span>Member since {userProfile?.createdAt?.toDate?.()?.toLocaleDateString() || "Recently"}</span>
+                    <span>•</span>
+                    <span>{stats.karma} karma points</span>
+                  </div>
+                </>
+              )}
+            </div>
+            {!editingProfile && (
+              <Button variant="outline" onClick={() => setEditingProfile(true)}>
+                <User className="w-4 h-4 mr-2" />
+                Edit Profile
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
+
+      <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -145,8 +262,8 @@ export default function ProfilePage() {
         <Card>
           <CardContent className="pt-6 text-center">
             <Bookmark className="w-8 h-8 text-green-500 mx-auto mb-2" />
-            <h3 className="text-2xl font-bold">{stats.badges}</h3>
-            <p className="text-gray-600">Badges</p>
+            <h3 className="text-2xl font-bold">{bookmarkedQuestions.length}</h3>
+            <p className="text-gray-600">Bookmarks</p>
           </CardContent>
         </Card>
       </div>
@@ -181,8 +298,13 @@ export default function ProfilePage() {
                   <CardContent className="pt-6">
                     <div className="flex items-start space-x-4">
                       <div className="flex flex-col items-center space-y-1">
-                        <span className="text-lg font-semibold">{(answer.upvotes || 0) - (answer.downvotes || 0)}</span>
+                        <span className="text-lg font-semibold">{answer.upvotes || 0}</span>
                         <span className="text-xs text-gray-500">votes</span>
+                        {answer.isAccepted && (
+                          <div className="flex items-center justify-center w-6 h-6 bg-green-500 rounded-full">
+                            <Check className="w-4 h-4 text-white" />
+                          </div>
+                        )}
                       </div>
                       <div className="flex-1">
                         <div
@@ -191,6 +313,7 @@ export default function ProfilePage() {
                         />
                         <div className="text-sm text-gray-500">
                           Answered {answer.createdAt?.toDate?.()?.toLocaleDateString() || "recently"}
+                          {answer.isAccepted && <span className="text-green-600 ml-2">• Accepted Answer</span>}
                         </div>
                       </div>
                     </div>
