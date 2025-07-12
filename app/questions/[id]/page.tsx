@@ -7,63 +7,92 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { ArrowUp, ArrowDown, Check, Flag, Bookmark } from "lucide-react"
+import { ArrowUp, ArrowDown, Check, Bookmark } from "lucide-react"
 import { RichTextEditor } from "@/components/rich-text-editor"
 import { useAuth } from "@/lib/auth-context"
-import { useQuestion } from "@/hooks/use-questions"
-import { useAnswers } from "@/hooks/use-answers"
 import { formatDistanceToNow } from "date-fns"
 import {
+  getQuestion,
+  getAnswers,
   createAnswer,
-  createVote,
-  updateVoteCount,
-  getUserVote,
+  handleUserVote,
+  getUserVotes,
   acceptAnswer,
   toggleBookmark,
   createNotification,
+  incrementQuestionViews,
 } from "@/lib/firestore-operations"
 import { toast } from "@/hooks/use-toast"
+import { doc, onSnapshot } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 
 export default function QuestionDetailPage() {
   const params = useParams()
   const questionId = params.id as string
   const { user, userProfile } = useAuth()
-  const { question, loading: questionLoading } = useQuestion(questionId)
-  const { answers, loading: answersLoading, refetch: refetchAnswers } = useAnswers(questionId)
+  const [question, setQuestion] = useState<any>(null)
+  const [answers, setAnswers] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
   const [newAnswer, setNewAnswer] = useState("")
   const [submittingAnswer, setSubmittingAnswer] = useState(false)
-  const [userVotes, setUserVotes] = useState<Record<string, "up" | "down" | null>>({})
+  const [userVotes, setUserVotes] = useState<Record<string, string | null>>({})
   const [isBookmarked, setIsBookmarked] = useState(false)
 
+  // Real-time question updates
   useEffect(() => {
-    // Load user votes for question and answers
+    if (!questionId) return
+
+    const unsubscribe = onSnapshot(doc(db, "questions", questionId), (doc) => {
+      if (doc.exists()) {
+        setQuestion({ id: doc.id, ...doc.data() })
+        // Increment view count only once when first loading
+        if (!question) {
+          incrementQuestionViews(questionId)
+        }
+      }
+      setLoading(false)
+    })
+
+    return unsubscribe
+  }, [questionId])
+
+  // Real-time answers updates
+  useEffect(() => {
+    if (!questionId) return
+
+    const fetchAnswers = async () => {
+      try {
+        const fetchedAnswers = await getAnswers(questionId)
+        setAnswers(fetchedAnswers)
+      } catch (error) {
+        console.error("Error fetching answers:", error)
+      }
+    }
+
+    fetchAnswers()
+
+    // Set up interval to refresh answers every 10 seconds
+    const interval = setInterval(fetchAnswers, 10000)
+    return () => clearInterval(interval)
+  }, [questionId])
+
+  // Load user votes
+  useEffect(() => {
     const loadUserVotes = async () => {
-      if (!user) return
+      if (!user || !question) return
 
-      const votes: Record<string, "up" | "down" | null> = {}
-
-      // Get vote for question
-      if (question) {
-        const questionVote = await getUserVote(user.uid, question.id)
-        votes[question.id] = questionVote?.type || null
-      }
-
-      // Get votes for answers
-      for (const answer of answers) {
-        const answerVote = await getUserVote(user.uid, answer.id)
-        votes[answer.id] = answerVote?.type || null
-      }
-
+      const targetIds = [question.id, ...answers.map((a) => a.id)]
+      const votes = await getUserVotes(user.uid, targetIds)
       setUserVotes(votes)
     }
 
-    if (user && (question || answers.length > 0)) {
+    if (user && question && answers.length >= 0) {
       loadUserVotes()
     }
   }, [user, question, answers])
 
+  // Check bookmark status
   useEffect(() => {
-    // Check if question is bookmarked
     if (user && userProfile && question) {
       setIsBookmarked(userProfile.bookmarks?.includes(question.id) || false)
     }
@@ -75,45 +104,26 @@ export default function QuestionDetailPage() {
       return
     }
 
-    const currentVote = userVotes[targetId]
-    const newVote = currentVote === voteType ? null : voteType
-
     try {
-      // Calculate vote change
-      let voteChange = 0
-      if (currentVote === null && newVote === "up") voteChange = 1
-      else if (currentVote === null && newVote === "down") voteChange = -1
-      else if (currentVote === "up" && newVote === null) voteChange = -1
-      else if (currentVote === "up" && newVote === "down") voteChange = -2
-      else if (currentVote === "down" && newVote === null) voteChange = 1
-      else if (currentVote === "down" && newVote === "up") voteChange = 2
+      const newVoteType = await handleUserVote(user.uid, targetId, targetType, voteType)
+      setUserVotes((prev) => ({ ...prev, [targetId]: newVoteType }))
 
-      // Update local state immediately
-      setUserVotes({ ...userVotes, [targetId]: newVote })
-
-      // Update in Firestore
-      await createVote({
-        userId: user.uid,
-        targetId,
-        targetType,
-        type: newVote,
-      })
-
-      await updateVoteCount(targetId, targetType, voteChange)
-
-      // Award karma for upvotes
-      if (newVote === "up" && currentVote !== "up") {
-        // Find the author and award karma
-        const target = targetType === "question" ? question : answers.find((a) => a.id === targetId)
-        if (target && target.authorId !== user.uid) {
-          // Award karma to author (this would be done in a cloud function in production)
-        }
+      // Refresh the specific item to get updated vote count
+      if (targetType === "question") {
+        const updatedQuestion = await getQuestion(questionId)
+        if (updatedQuestion) setQuestion(updatedQuestion)
+      } else {
+        const updatedAnswers = await getAnswers(questionId)
+        setAnswers(updatedAnswers)
       }
+
+      toast({
+        title: newVoteType ? `${voteType === "up" ? "Upvoted" : "Downvoted"}!` : "Vote removed",
+        description: newVoteType ? "Thanks for your feedback!" : "Your vote has been removed",
+      })
     } catch (error) {
       console.error("Error voting:", error)
       toast({ title: "Error", description: "Failed to vote", variant: "destructive" })
-      // Revert local state
-      setUserVotes({ ...userVotes, [targetId]: currentVote })
     }
   }
 
@@ -147,7 +157,11 @@ export default function QuestionDetailPage() {
       }
 
       setNewAnswer("")
-      await refetchAnswers()
+
+      // Refresh answers
+      const updatedAnswers = await getAnswers(questionId)
+      setAnswers(updatedAnswers)
+
       toast({ title: "Success!", description: "Your answer has been posted" })
     } catch (error) {
       console.error("Error submitting answer:", error)
@@ -171,7 +185,12 @@ export default function QuestionDetailPage() {
         questionId,
       })
 
-      await refetchAnswers()
+      // Refresh data
+      const updatedQuestion = await getQuestion(questionId)
+      const updatedAnswers = await getAnswers(questionId)
+      if (updatedQuestion) setQuestion(updatedQuestion)
+      setAnswers(updatedAnswers)
+
       toast({ title: "Success!", description: "Answer accepted" })
     } catch (error) {
       console.error("Error accepting answer:", error)
@@ -195,7 +214,7 @@ export default function QuestionDetailPage() {
     }
   }
 
-  if (questionLoading) {
+  if (loading) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-8">
         <div className="animate-pulse">
@@ -230,13 +249,7 @@ export default function QuestionDetailPage() {
                   <div className="flex items-center space-x-4 text-sm text-gray-500 mb-4">
                     <span>
                       Asked{" "}
-                      {formatDistanceToNow(question.createdAt?.toDate() || new Date(), {
-                        addSuffix: true,
-                      })}
-                    </span>
-                    <span>
-                      Modified{" "}
-                      {formatDistanceToNow(question.updatedAt?.toDate() || new Date(), {
+                      {formatDistanceToNow(question.createdAt?.toDate?.() || new Date(), {
                         addSuffix: true,
                       })}
                     </span>
@@ -245,12 +258,8 @@ export default function QuestionDetailPage() {
                 </div>
                 <div className="flex items-center space-x-2">
                   <Button variant="outline" size="sm" onClick={handleBookmark}>
-                    <Bookmark className={`w-4 h-4 mr-1 ${isBookmarked ? "fill-current" : ""}`} />
+                    <Bookmark className={`w-4 h-4 mr-1 ${isBookmarked ? "fill-current text-orange-500" : ""}`} />
                     {isBookmarked ? "Bookmarked" : "Bookmark"}
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    <Flag className="w-4 h-4 mr-1" />
-                    Flag
                   </Button>
                 </div>
               </div>
@@ -263,16 +272,16 @@ export default function QuestionDetailPage() {
                     variant="ghost"
                     size="sm"
                     onClick={() => handleVote(question.id, "question", "up")}
-                    className={userVotes[question.id] === "up" ? "text-orange-500" : ""}
+                    className={userVotes[question.id] === "up" ? "text-orange-500 bg-orange-50" : ""}
                   >
                     <ArrowUp className="w-5 h-5" />
                   </Button>
-                  <span className="text-lg font-semibold">{(question.upvotes || 0) - (question.downvotes || 0)}</span>
+                  <span className="text-lg font-semibold">{question.upvotes || 0}</span>
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => handleVote(question.id, "question", "down")}
-                    className={userVotes[question.id] === "down" ? "text-red-500" : ""}
+                    className={userVotes[question.id] === "down" ? "text-red-500 bg-red-50" : ""}
                   >
                     <ArrowDown className="w-5 h-5" />
                   </Button>
@@ -315,101 +324,83 @@ export default function QuestionDetailPage() {
               {answers.length} Answer{answers.length !== 1 ? "s" : ""}
             </h2>
 
-            {answersLoading ? (
-              <div className="space-y-6">
-                {[...Array(2)].map((_, i) => (
-                  <div key={i} className="bg-white p-6 rounded-lg shadow-sm border animate-pulse">
-                    <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                    <div className="h-32 bg-gray-200 rounded mb-4"></div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {answers.map((answer: any) => (
-                  <Card key={answer.id} className={answer.isAccepted ? "border-green-500 bg-green-50" : ""}>
-                    <CardContent className="pt-6">
-                      <div className="flex space-x-4">
-                        {/* Vote Buttons */}
-                        <div className="flex flex-col items-center space-y-2">
+            <div className="space-y-6">
+              {answers.map((answer: any) => (
+                <Card key={answer.id} className={answer.isAccepted ? "border-green-500 bg-green-50" : ""}>
+                  <CardContent className="pt-6">
+                    <div className="flex space-x-4">
+                      {/* Vote Buttons */}
+                      <div className="flex flex-col items-center space-y-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleVote(answer.id, "answer", "up")}
+                          className={userVotes[answer.id] === "up" ? "text-orange-500 bg-orange-50" : ""}
+                        >
+                          <ArrowUp className="w-5 h-5" />
+                        </Button>
+                        <span className="text-lg font-semibold">{answer.upvotes || 0}</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleVote(answer.id, "answer", "down")}
+                          className={userVotes[answer.id] === "down" ? "text-red-500 bg-red-50" : ""}
+                        >
+                          <ArrowDown className="w-5 h-5" />
+                        </Button>
+                        {answer.isAccepted && (
+                          <div className="flex items-center justify-center w-8 h-8 bg-green-500 rounded-full">
+                            <Check className="w-5 h-5 text-white" />
+                          </div>
+                        )}
+                        {user && question.authorId === user.uid && !answer.isAccepted && !question.isAnswered && (
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleVote(answer.id, "answer", "up")}
-                            className={userVotes[answer.id] === "up" ? "text-orange-500" : ""}
+                            onClick={() => handleAcceptAnswer(answer.id, answer.authorId)}
+                            className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                            title="Accept this answer"
                           >
-                            <ArrowUp className="w-5 h-5" />
+                            <Check className="w-5 h-5" />
                           </Button>
-                          <span className="text-lg font-semibold">
-                            {(answer.upvotes || 0) - (answer.downvotes || 0)}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleVote(answer.id, "answer", "down")}
-                            className={userVotes[answer.id] === "down" ? "text-red-500" : ""}
-                          >
-                            <ArrowDown className="w-5 h-5" />
-                          </Button>
-                          {answer.isAccepted && (
-                            <div className="flex items-center justify-center w-8 h-8 bg-green-500 rounded-full">
-                              <Check className="w-5 h-5 text-white" />
-                            </div>
-                          )}
-                          {user && question.authorId === user.uid && !answer.isAccepted && !question.isAnswered && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleAcceptAnswer(answer.id, answer.authorId)}
-                              className="text-green-600 hover:text-green-700"
-                            >
-                              <Check className="w-5 h-5" />
-                            </Button>
-                          )}
-                        </div>
+                        )}
+                      </div>
 
-                        {/* Answer Content */}
-                        <div className="flex-1">
-                          {answer.isAccepted && (
-                            <div className="flex items-center space-x-2 mb-4">
-                              <Check className="w-4 h-4 text-green-500" />
-                              <span className="text-sm font-medium text-green-700">Accepted Answer</span>
-                            </div>
-                          )}
+                      {/* Answer Content */}
+                      <div className="flex-1">
+                        {answer.isAccepted && (
+                          <div className="flex items-center space-x-2 mb-4">
+                            <Check className="w-4 h-4 text-green-500" />
+                            <span className="text-sm font-medium text-green-700">Accepted Answer</span>
+                          </div>
+                        )}
 
-                          <div
-                            className="prose prose-sm max-w-none mb-6"
-                            dangerouslySetInnerHTML={{ __html: answer.content }}
-                          />
+                        <div
+                          className="prose prose-sm max-w-none mb-6"
+                          dangerouslySetInnerHTML={{ __html: answer.content }}
+                        />
 
-                          {/* Answer Author Info */}
-                          <div className="flex justify-between items-center">
-                            <div className="flex items-center space-x-2">
-                              <Button variant="ghost" size="sm">
-                                <Flag className="w-4 h-4 mr-1" />
-                                Flag
-                              </Button>
-                            </div>
-                            <div className="flex items-center space-x-2 text-sm">
-                              <span className="text-gray-500">
-                                answered{" "}
-                                {formatDistanceToNow(answer.createdAt?.toDate() || new Date(), {
-                                  addSuffix: true,
-                                })}
-                              </span>
-                              <Avatar className="w-6 h-6">
-                                <AvatarFallback>{answer.authorUsername?.charAt(0).toUpperCase() || "A"}</AvatarFallback>
-                              </Avatar>
-                              <span className="font-medium">{answer.authorUsername || "Anonymous"}</span>
-                            </div>
+                        {/* Answer Author Info */}
+                        <div className="flex justify-end">
+                          <div className="flex items-center space-x-2 text-sm">
+                            <span className="text-gray-500">
+                              answered{" "}
+                              {formatDistanceToNow(answer.createdAt?.toDate?.() || new Date(), {
+                                addSuffix: true,
+                              })}
+                            </span>
+                            <Avatar className="w-6 h-6">
+                              <AvatarFallback>{answer.authorUsername?.charAt(0).toUpperCase() || "A"}</AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium">{answer.authorUsername || "Anonymous"}</span>
                           </div>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
           </div>
 
           {/* Answer Form */}
@@ -461,7 +452,7 @@ export default function QuestionDetailPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Score</span>
-                <span className="font-medium">{(question.upvotes || 0) - (question.downvotes || 0)}</span>
+                <span className="font-medium">{question.upvotes || 0}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Status</span>
