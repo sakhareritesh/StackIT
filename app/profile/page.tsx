@@ -12,8 +12,8 @@ import { Badge } from "@/components/ui/badge"
 import { User, Award, Bookmark, MessageSquare, TrendingUp, Camera, Users, Star, Check } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { QuestionCard } from "@/components/question-card"
-import { getUserStats, getBookmarkedQuestions } from "@/lib/firestore-operations"
-import { collection, query, where, orderBy, getDocs, updateDoc, doc } from "firebase/firestore"
+import { getUserStats, getBookmarkedQuestions, getUserQuestions, getUserAnswers } from "@/lib/firestore-operations"
+import { updateDoc, doc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { toast } from "@/hooks/use-toast"
 import { formatDistanceToNow } from "date-fns"
@@ -54,48 +54,13 @@ export default function ProfilePage() {
         const stats = await getUserStats(user.uid)
         setUserStats(stats)
 
-        // Fetch user's questions
-        const questionsQuery = query(
-          collection(db, "questions"),
-          where("authorId", "==", user.uid),
-          orderBy("createdAt", "desc"),
-        )
-        const questionsSnapshot = await getDocs(questionsQuery)
-        const questions = questionsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+        // Fetch user's questions using stored IDs
+        const questions = await getUserQuestions(user.uid)
         setUserQuestions(questions)
 
-        // Fetch user's answers with question details
-        const answersQuery = query(
-          collection(db, "answers"),
-          where("authorId", "==", user.uid),
-          orderBy("createdAt", "desc"),
-        )
-        const answersSnapshot = await getDocs(answersQuery)
-        const answers = answersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-
-        // Fetch question details for each answer
-        const answersWithQuestions = await Promise.all(
-          answers.map(async (answer) => {
-            try {
-              const questionQuery = query(collection(db, "questions"), where("__name__", "==", answer.questionId))
-              const questionSnapshot = await getDocs(questionQuery)
-              const questionData = questionSnapshot.docs[0]?.data()
-              return {
-                ...answer,
-                questionTitle: questionData?.title || "Question not found",
-                questionId: answer.questionId,
-              }
-            } catch (error) {
-              console.error("Error fetching question for answer:", error)
-              return {
-                ...answer,
-                questionTitle: "Question not found",
-                questionId: answer.questionId,
-              }
-            }
-          }),
-        )
-        setUserAnswers(answersWithQuestions)
+        // Fetch user's answers using stored IDs with question details
+        const answers = await getUserAnswers(user.uid)
+        setUserAnswers(answers)
 
         // Fetch bookmarked questions
         const bookmarks = await getBookmarkedQuestions(user.uid)

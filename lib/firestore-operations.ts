@@ -108,6 +108,9 @@ export const createQuestion = async (questionData: any) => {
     // Check for first contribution badge
     await checkFirstContribution(questionData.authorId)
 
+    // Update user statistics
+    await updateUserQuestionCount(questionData.authorId, docRef.id)
+
     return docRef.id
   } catch (error) {
     console.error("Error creating question:", error)
@@ -176,6 +179,9 @@ export const createAnswer = async (answerData: any) => {
     // Check for first contribution badge
     await checkFirstContribution(answerData.authorId)
 
+    // Update user statistics
+    await updateUserAnswerCount(answerData.authorId, docRef.id)
+
     return docRef.id
   } catch (error) {
     console.error("Error creating answer:", error)
@@ -240,13 +246,10 @@ export const acceptAnswer = async (questionId: string, answerId: string, authorI
       updatedAt: serverTimestamp(),
     })
 
-    // Award karma to answer author
-    batch.update(doc(db, "users", authorId), {
-      karma: increment(15),
-      acceptedAnswers: increment(1),
-    })
-
     await batch.commit()
+
+    // Update user accepted answer count and award karma
+    await updateUserAcceptedAnswerCount(authorId)
 
     // Award badge for first accepted answer
     await awardBadge(authorId, "First Accepted Answer")
@@ -639,40 +642,365 @@ export const followTag = async (userId: string, tagName: string) => {
   }
 }
 
-// Get user statistics
+// User statistics operations
+export const updateUserQuestionCount = async (userId: string, questionId: string) => {
+  try {
+    const userRef = doc(db, "users", userId)
+
+    // Use a batch to ensure atomicity
+    const batch = writeBatch(db)
+
+    // Increment questions count
+    batch.update(userRef, {
+      questionsCount: increment(1),
+      questionIds: arrayUnion(questionId),
+      updatedAt: serverTimestamp(),
+    })
+
+    await batch.commit()
+
+    // Award karma for asking a question
+    await updateUserKarma(userId, 5, "Asked a question")
+
+    console.log(`Updated question count for user ${userId}, question ${questionId}`)
+  } catch (error) {
+    console.error("Error updating user question count:", error)
+    throw error
+  }
+}
+
+export const updateUserAnswerCount = async (userId: string, answerId: string) => {
+  try {
+    const userRef = doc(db, "users", userId)
+
+    // Use a batch to ensure atomicity
+    const batch = writeBatch(db)
+
+    // Increment answers count
+    batch.update(userRef, {
+      answersCount: increment(1),
+      answerIds: arrayUnion(answerId),
+      updatedAt: serverTimestamp(),
+    })
+
+    await batch.commit()
+
+    // Award karma for providing an answer
+    await updateUserKarma(userId, 10, "Provided an answer")
+
+    console.log(`Updated answer count for user ${userId}, answer ${answerId}`)
+  } catch (error) {
+    console.error("Error updating user answer count:", error)
+    throw error
+  }
+}
+
+export const updateUserAcceptedAnswerCount = async (userId: string) => {
+  try {
+    const userRef = doc(db, "users", userId)
+
+    await updateDoc(userRef, {
+      acceptedAnswers: increment(1),
+      updatedAt: serverTimestamp(),
+    })
+
+    // Award karma for having an answer accepted
+    await updateUserKarma(userId, 25, "Answer was accepted")
+
+    console.log(`Updated accepted answer count for user ${userId}`)
+  } catch (error) {
+    console.error("Error updating user accepted answer count:", error)
+    throw error
+  }
+}
+
+export const updateUserKarma = async (userId: string, points: number, reason: string) => {
+  try {
+    const userRef = doc(db, "users", userId)
+
+    await updateDoc(userRef, {
+      karma: increment(points),
+      updatedAt: serverTimestamp(),
+    })
+
+    // Log karma change for transparency
+    await addDoc(collection(db, "karmaHistory"), {
+      userId,
+      points,
+      reason,
+      timestamp: serverTimestamp(),
+    })
+
+    console.log(`Updated karma for user ${userId}: +${points} points for ${reason}`)
+  } catch (error) {
+    console.error("Error updating user karma:", error)
+    throw error
+  }
+}
+
+// Initialize user fields if they don't exist
+export const initializeUserFields = async (userId: string) => {
+  try {
+    const userRef = doc(db, "users", userId)
+    const userDoc = await getDoc(userRef)
+
+    if (userDoc.exists()) {
+      const userData = userDoc.data()
+      const updates: any = {}
+
+      // Initialize missing fields
+      if (userData.questionsCount === undefined) updates.questionsCount = 0
+      if (userData.answersCount === undefined) updates.answersCount = 0
+      if (userData.acceptedAnswers === undefined) updates.acceptedAnswers = 0
+      if (userData.questionIds === undefined) updates.questionIds = []
+      if (userData.answerIds === undefined) updates.answerIds = []
+      if (userData.karma === undefined) updates.karma = 0
+
+      if (Object.keys(updates).length > 0) {
+        updates.updatedAt = serverTimestamp()
+        await updateDoc(userRef, updates)
+        console.log(`Initialized missing fields for user ${userId}:`, updates)
+      }
+    }
+  } catch (error) {
+    console.error("Error initializing user fields:", error)
+    throw error
+  }
+}
+
+// Migration utility to update existing users with new fields
+export const migrateUserData = async () => {
+  try {
+    console.log("Starting user data migration...")
+    
+    const usersQuery = query(collection(db, "users"))
+    const usersSnapshot = await getDocs(usersQuery)
+    
+    const batch = writeBatch(db)
+    let updateCount = 0
+    
+    for (const userDoc of usersSnapshot.docs) {
+      const userData = userDoc.data()
+      const updates: any = {}
+      
+      // Initialize missing fields
+      if (userData.questionsCount === undefined) updates.questionsCount = 0
+      if (userData.answersCount === undefined) updates.answersCount = 0
+      if (userData.acceptedAnswers === undefined) updates.acceptedAnswers = 0
+      if (userData.questionIds === undefined) updates.questionIds = []
+      if (userData.answerIds === undefined) updates.answerIds = []
+      if (userData.karma === undefined) updates.karma = 0
+      
+      if (Object.keys(updates).length > 0) {
+        updates.updatedAt = serverTimestamp()
+        batch.update(userDoc.ref, updates)
+        updateCount++
+        
+        console.log(`Migrating user ${userDoc.id}:`, Object.keys(updates))
+      }
+    }
+    
+    if (updateCount > 0) {
+      await batch.commit()
+      console.log(`Migration completed: ${updateCount} users updated`)
+    } else {
+      console.log("Migration completed: No users needed updates")
+    }
+    
+    return updateCount
+  } catch (error) {
+    console.error("Error during user data migration:", error)
+    throw error
+  }
+}
+
+// Utility to populate questionIds and answerIds for existing users
+export const populateUserContentIds = async () => {
+  try {
+    console.log("Starting user content ID population...")
+    
+    const usersQuery = query(collection(db, "users"))
+    const usersSnapshot = await getDocs(usersQuery)
+    
+    for (const userDoc of usersSnapshot.docs) {
+      const userId = userDoc.id
+      
+      // Get user's questions
+      const questionsQuery = query(
+        collection(db, "questions"),
+        where("authorId", "==", userId)
+      )
+      const questionsSnapshot = await getDocs(questionsQuery)
+      const questionIds = questionsSnapshot.docs.map(doc => doc.id)
+      
+      // Get user's answers
+      const answersQuery = query(
+        collection(db, "answers"),
+        where("authorId", "==", userId)
+      )
+      const answersSnapshot = await getDocs(answersQuery)
+      const answerIds = answersSnapshot.docs.map(doc => doc.id)
+      
+      // Update user with actual counts and IDs
+      const updates: any = {
+        questionsCount: questionIds.length,
+        answersCount: answerIds.length,
+        questionIds: questionIds,
+        answerIds: answerIds,
+        updatedAt: serverTimestamp(),
+      }
+      
+      await updateDoc(userDoc.ref, updates)
+      console.log(`Populated content IDs for user ${userId}: ${questionIds.length} questions, ${answerIds.length} answers`)
+    }
+    
+    console.log("Content ID population completed")
+  } catch (error) {
+    console.error("Error during content ID population:", error)
+    throw error
+  }
+}
+
+// Get comprehensive user statistics
 export const getUserStats = async (userId: string) => {
   try {
-    const [questionsSnapshot, answersSnapshot, userDoc] = await Promise.all([
-      getDocs(query(collection(db, "questions"), where("authorId", "==", userId))),
-      getDocs(query(collection(db, "answers"), where("authorId", "==", userId))),
-      getDoc(doc(db, "users", userId)),
-    ])
-
-    const questions = questionsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-    const answers = answersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-    const userData = userDoc.exists() ? userDoc.data() : {}
-
-    const acceptedAnswers = answers.filter((answer) => answer.isAccepted).length
-    const totalViews = questions.reduce((sum, question) => sum + (question.views || 0), 0)
-    const totalUpvotes = [...questions.map((q) => q.upvotes || 0), ...answers.map((a) => a.upvotes || 0)].reduce(
-      (sum, votes) => sum + votes,
-      0,
+    // Get user profile for basic stats
+    const userProfile = await getUserProfile(userId)
+    
+    // Get questions count
+    const questionsQuery = query(collection(db, "questions"), where("authorId", "==", userId))
+    const questionsSnapshot = await getDocs(questionsQuery)
+    const questionsCount = questionsSnapshot.size
+    
+    // Get answers count
+    const answersQuery = query(collection(db, "answers"), where("authorId", "==", userId))
+    const answersSnapshot = await getDocs(answersQuery)
+    const answersCount = answersSnapshot.size
+    
+    // Get accepted answers count
+    const acceptedAnswersQuery = query(
+      collection(db, "answers"), 
+      where("authorId", "==", userId),
+      where("isAccepted", "==", true)
     )
-
+    const acceptedAnswersSnapshot = await getDocs(acceptedAnswersQuery)
+    const acceptedAnswers = acceptedAnswersSnapshot.size
+    
     return {
-      questionsCount: questions.length,
-      answersCount: answers.length,
+      questionsCount,
+      answersCount,
       acceptedAnswers,
-      totalViews,
-      totalUpvotes,
-      karma: userData.karma || 0,
-      badges: userData.badges || [],
-      followerCount: userData.followerCount || 0,
-      followingCount: userData.followingCount || 0,
-      bookmarks: userData.bookmarks || [],
+      karma: (userProfile as any)?.karma || 0,
+      badges: (userProfile as any)?.badges || [],
+      followerCount: (userProfile as any)?.followerCount || 0,
+      followingCount: (userProfile as any)?.followingCount || 0,
     }
   } catch (error) {
     console.error("Error getting user stats:", error)
-    throw error
+    return {
+      questionsCount: 0,
+      answersCount: 0,
+      acceptedAnswers: 0,
+      karma: 0,
+      badges: [],
+      followerCount: 0,
+      followingCount: 0,
+    }
+  }
+}
+
+// Get user's questions using stored question IDs
+export const getUserQuestions = async (userId: string) => {
+  try {
+    const userProfile = await getUserProfile(userId)
+    const questionIds = (userProfile as any)?.questionIds || []
+    
+    if (questionIds.length === 0) {
+      return []
+    }
+    
+    // Fetch questions using their IDs
+    const questions = await Promise.all(
+      questionIds.map(async (questionId: string) => {
+        try {
+          const question = await getQuestion(questionId)
+          return question
+        } catch (error) {
+          console.error(`Error fetching question ${questionId}:`, error)
+          return null
+        }
+      })
+    )
+    
+    // Filter out null results and sort by creation date (newest first)
+    return questions
+      .filter(question => question !== null)
+      .sort((a, b) => {
+        const aTime = a?.createdAt?.toDate?.() || new Date(0)
+        const bTime = b?.createdAt?.toDate?.() || new Date(0)
+        return bTime.getTime() - aTime.getTime()
+      })
+  } catch (error) {
+    console.error("Error getting user questions:", error)
+    return []
+  }
+}
+
+// Get user's answers using stored answer IDs with question details
+export const getUserAnswers = async (userId: string) => {
+  try {
+    const userProfile = await getUserProfile(userId)
+    const answerIds = (userProfile as any)?.answerIds || []
+    
+    if (answerIds.length === 0) {
+      return []
+    }
+    
+    // Fetch answers using their IDs
+    const answers = await Promise.all(
+      answerIds.map(async (answerId: string) => {
+        try {
+          // Get the answer document
+          const answerDoc = await getDoc(doc(db, "answers", answerId))
+          if (!answerDoc.exists()) {
+            return null
+          }
+          
+          const answerData = { id: answerDoc.id, ...answerDoc.data() }
+          
+          // Get the corresponding question
+          try {
+            const question = await getQuestion((answerData as any).questionId)
+            return {
+              ...answerData,
+              questionTitle: (question as any)?.title || "Question not found",
+              questionData: question
+            }
+          } catch (error) {
+            console.error(`Error fetching question for answer ${answerId}:`, error)
+            return {
+              ...answerData,
+              questionTitle: "Question not found",
+              questionData: null
+            }
+          }
+        } catch (error) {
+          console.error(`Error fetching answer ${answerId}:`, error)
+          return null
+        }
+      })
+    )
+    
+    // Filter out null results and sort by creation date (newest first)
+    return answers
+      .filter(answer => answer !== null)
+      .sort((a, b) => {
+        const aTime = a?.createdAt?.toDate?.() || new Date(0)
+        const bTime = b?.createdAt?.toDate?.() || new Date(0)
+        return bTime.getTime() - aTime.getTime()
+      })
+  } catch (error) {
+    console.error("Error getting user answers:", error)
+    return []
   }
 }

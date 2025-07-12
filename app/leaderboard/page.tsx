@@ -21,20 +21,47 @@ interface LeaderboardUser {
   rank: number
 }
 
+interface FirebaseUser {
+  id: string
+  username?: string
+  avatar?: string
+  karma?: number
+  questionsCount?: number
+  answersCount?: number
+  acceptedAnswers?: number
+  badges?: string[]
+  createdAt?: any
+  [key: string]: any
+}
+
 export default function LeaderboardPage() {
   const { user, userProfile } = useAuth()
   const [leaderboard, setLeaderboard] = useState<LeaderboardUser[]>([])
   const [currentUserRank, setCurrentUserRank] = useState<number>(0)
   const [loading, setLoading] = useState(true)
   const [totalParticipants, setTotalParticipants] = useState(0)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchLeaderboard = async () => {
       try {
+        console.log("Fetching leaderboard data...")
+        
         // Fetch all users ordered by karma
         const usersQuery = query(collection(db, "users"), orderBy("karma", "desc"))
         const usersSnapshot = await getDocs(usersQuery)
-        const allUsers = usersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+        const allUsers = usersSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as FirebaseUser))
+
+        console.log("Fetched users:", allUsers.length)
+        
+        // If no users found, show a helpful message
+        if (allUsers.length === 0) {
+          console.log("No users found in database")
+          setError("No users found. The database appears to be empty.")
+          return
+        }
+        
+        console.log("Sample user data:", allUsers[0])
 
         // Calculate additional stats for each user
         const leaderboardData: LeaderboardUser[] = allUsers.map((userData, index) => ({
@@ -57,8 +84,9 @@ export default function LeaderboardPage() {
           const userIndex = leaderboardData.findIndex((u) => u.id === user.uid)
           setCurrentUserRank(userIndex >= 0 ? userIndex + 1 : 0)
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error fetching leaderboard:", error)
+        setError(error.message || "Failed to load leaderboard data")
       } finally {
         setLoading(false)
       }
@@ -98,6 +126,24 @@ export default function LeaderboardPage() {
             ))}
           </div>
         </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <h1 className="text-2xl font-bold text-red-600 mb-2">Error Loading Leaderboard</h1>
+              <p className="text-red-500 mb-4">{error}</p>
+              <p className="text-sm text-gray-600">
+                Please check your internet connection and try refreshing the page.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -156,78 +202,88 @@ export default function LeaderboardPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {leaderboard.map((contributor) => (
-              <div
-                key={contributor.id}
-                className={`flex items-center space-x-4 p-4 rounded-lg transition-colors ${
-                  contributor.rank <= 3
-                    ? "bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200"
-                    : "hover:bg-gray-50"
-                }`}
-              >
-                {/* Rank */}
-                <div className="flex items-center justify-center w-12 h-12">
-                  {contributor.rank <= 3 ? (
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center ${getRankBadgeColor(contributor.rank)}`}
-                    >
-                      {getRankIcon(contributor.rank)}
-                    </div>
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
-                      <span className="text-lg font-bold text-gray-600">{contributor.rank}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Avatar */}
-                <Avatar className="w-12 h-12">
-                  <AvatarImage src={contributor.avatar || ""} />
-                  <AvatarFallback>{contributor.username.charAt(0).toUpperCase()}</AvatarFallback>
-                </Avatar>
-
-                {/* User Info */}
-                <div className="flex-1">
-                  <div className="flex items-center space-x-2 mb-1">
-                    <h3 className="text-lg font-semibold hover:text-orange-600 cursor-pointer">
-                      {contributor.username}
-                    </h3>
-                    {user && contributor.id === user.uid && (
-                      <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                        You
-                      </Badge>
-                    )}
-                    {contributor.badges.length > 0 && (
-                      <div className="flex space-x-1">
-                        {contributor.badges.slice(0, 3).map((badge, index) => (
-                          <Award key={index} className="w-4 h-4 text-yellow-500" />
-                        ))}
+            {leaderboard.length === 0 ? (
+              <div className="text-center py-8">
+                <Trophy className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <h3 className="text-lg font-semibold text-gray-600 mb-2">No Data Available</h3>
+                <p className="text-gray-500">
+                  The leaderboard is empty. Users will appear here once they start participating in the community.
+                </p>
+              </div>
+            ) : (
+              leaderboard.map((contributor) => (
+                <div
+                  key={contributor.id}
+                  className={`flex items-center space-x-4 p-4 rounded-lg transition-colors ${
+                    contributor.rank <= 3
+                      ? "bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200"
+                      : "hover:bg-gray-50"
+                  }`}
+                >
+                  {/* Rank */}
+                  <div className="flex items-center justify-center w-12 h-12">
+                    {contributor.rank <= 3 ? (
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center ${getRankBadgeColor(contributor.rank)}`}
+                      >
+                        {getRankIcon(contributor.rank)}
+                      </div>
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                        <span className="text-lg font-bold text-gray-600">{contributor.rank}</span>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center space-x-4 text-sm text-gray-600">
-                    <span className="flex items-center">
-                      <Star className="w-4 h-4 mr-1 text-yellow-500" />
-                      {contributor.karma} karma
-                    </span>
-                    <span>{contributor.questionsCount} questions</span>
-                    <span>{contributor.answersCount} answers</span>
-                    {contributor.acceptedAnswers > 0 && (
-                      <span className="text-green-600">{contributor.acceptedAnswers} accepted</span>
+
+                  {/* Avatar */}
+                  <Avatar className="w-12 h-12">
+                    <AvatarImage src={contributor.avatar || ""} />
+                    <AvatarFallback>{contributor.username.charAt(0).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+
+                  {/* User Info */}
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2 mb-1">
+                      <h3 className="text-lg font-semibold hover:text-orange-600 cursor-pointer">
+                        {contributor.username}
+                      </h3>
+                      {user && contributor.id === user.uid && (
+                        <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                          You
+                        </Badge>
+                      )}
+                      {contributor.badges.length > 0 && (
+                        <div className="flex space-x-1">
+                          {contributor.badges.slice(0, 3).map((badge, index) => (
+                            <Award key={index} className="w-4 h-4 text-yellow-500" />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-4 text-sm text-gray-600">
+                      <span className="flex items-center">
+                        <Star className="w-4 h-4 mr-1 text-yellow-500" />
+                        {contributor.karma} karma
+                      </span>
+                      <span>{contributor.questionsCount} questions</span>
+                      <span>{contributor.answersCount} answers</span>
+                      {contributor.acceptedAnswers > 0 && (
+                        <span className="text-green-600">{contributor.acceptedAnswers} accepted</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Rank Badge */}
+                  <div className="text-right">
+                    {contributor.rank <= 10 && (
+                      <Badge variant="secondary" className={`${getRankBadgeColor(contributor.rank)} text-white border-0`}>
+                        Top {contributor.rank <= 3 ? "3" : "10"}
+                      </Badge>
                     )}
                   </div>
                 </div>
-
-                {/* Rank Badge */}
-                <div className="text-right">
-                  {contributor.rank <= 10 && (
-                    <Badge variant="secondary" className={`${getRankBadgeColor(contributor.rank)} text-white border-0`}>
-                      Top {contributor.rank <= 3 ? "3" : "10"}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </CardContent>
       </Card>
