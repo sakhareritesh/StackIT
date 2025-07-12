@@ -6,7 +6,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Search, TrendingUp, Users, MessageSquare } from "lucide-react"
+import { Search, TrendingUp, Users, MessageSquare, Trophy } from "lucide-react"
 import { QuestionCard } from "@/components/question-card"
 import { useQuestions } from "@/hooks/use-questions"
 import Link from "next/link"
@@ -74,6 +74,11 @@ export default function HomePage() {
             <Link href="/questions">
               <Button size="lg" variant="secondary" className="text-lg px-8">
                 Browse Questions
+              </Button>
+            </Link>
+            <Link href="/ask-ai">
+              <Button size="lg" variant="secondary" className="text-lg px-8">
+                Ask AI
               </Button>
             </Link>
             <Link href="/ask">
@@ -196,6 +201,12 @@ export default function HomePage() {
                 <Link href="/users" className="block">
                   <Button className="w-full justify-start bg-transparent" variant="outline">
                     Top Contributors
+                  </Button>
+                </Link>
+                <Link href="/leaderboard" className="block">
+                  <Button className="w-full justify-start bg-transparent" variant="outline">
+                    <Trophy className="mr-2 h-4 w-4" />
+                    Leaderboard
                   </Button>
                 </Link>
               </div>

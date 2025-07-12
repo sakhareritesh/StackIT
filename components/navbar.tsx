@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,8 @@ import { useAuth } from "@/lib/auth-context"
 import { useNotifications } from "@/hooks/use-notifications"
 import { AuthDialog } from "./auth-dialog"
 import { formatDistanceToNow } from "date-fns"
+import { doc, getDoc } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 
 export function Navbar() {
   const { user, userProfile, logout } = useAuth()
@@ -29,6 +31,27 @@ export function Navbar() {
       router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
     }
   }
+
+  // Add this useEffect to refresh user profile data
+  useEffect(() => {
+    const refreshUserProfile = async () => {
+      if (user) {
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid))
+          if (userDoc.exists()) {
+            // This will trigger a re-render with updated profile data
+            window.location.reload()
+          }
+        } catch (error) {
+          console.error("Error refreshing user profile:", error)
+        }
+      }
+    }
+
+    // Refresh profile data every 30 seconds
+    const interval = setInterval(refreshUserProfile, 30000)
+    return () => clearInterval(interval)
+  }, [user])
 
   return (
     <nav className="border-b bg-white sticky top-0 z-50">
@@ -62,6 +85,11 @@ export function Navbar() {
           <div className="flex items-center space-x-4">
             {user ? (
               <>
+                {/* Ask AI Button */}
+                <Link href="/ask-ai">
+                  <Button variant="secondary">Ask AI</Button>
+                </Link>
+
                 {/* Ask Question Button */}
                 <Link href="/ask">
                   <Button className="bg-orange-500 hover:bg-orange-600">
@@ -116,11 +144,11 @@ export function Navbar() {
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" className="flex items-center space-x-2">
                       <Avatar className="w-8 h-8">
-                        <AvatarImage src={userProfile?.avatar || user.photoURL || ""} />
+                        <AvatarImage src={userProfile?.avatar || user?.photoURL || ""} />
                         <AvatarFallback>{userProfile?.username?.charAt(0).toUpperCase() || "U"}</AvatarFallback>
                       </Avatar>
                       <div className="text-left">
-                        <p className="text-sm font-medium">{userProfile?.username}</p>
+                        <p className="text-sm font-medium">{userProfile?.username || user?.displayName}</p>
                         <p className="text-xs text-gray-500">{userProfile?.karma || 0} karma</p>
                       </div>
                     </Button>

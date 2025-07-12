@@ -70,7 +70,12 @@ export function QuestionCard({ question }: QuestionCardProps) {
               </AvatarFallback>
             </Avatar>
             <div className="text-sm">
-              <span className="font-medium">{question.authorUsername || "Anonymous"}</span>
+              <Link
+                href={`/users/${question.authorId}`}
+                className="font-medium hover:text-orange-600 transition-colors cursor-pointer"
+              >
+                {question.authorUsername || "Anonymous"}
+              </Link>
               <span className="text-gray-500 ml-2">{formatDistanceToNow(createdAt, { addSuffix: true })}</span>
             </div>
           </div>

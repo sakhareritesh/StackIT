@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -37,6 +37,7 @@ export default function QuestionDetailPage() {
   const [submittingAnswer, setSubmittingAnswer] = useState(false)
   const [userVotes, setUserVotes] = useState<Record<string, string | null>>({})
   const [isBookmarked, setIsBookmarked] = useState(false)
+  const hasIncrementedViews = useRef(false)
 
   // Real-time question updates
   useEffect(() => {
@@ -45,15 +46,19 @@ export default function QuestionDetailPage() {
     const unsubscribe = onSnapshot(doc(db, "questions", questionId), (doc) => {
       if (doc.exists()) {
         setQuestion({ id: doc.id, ...doc.data() })
-        // Increment view count only once when first loading
-        if (!question) {
-          incrementQuestionViews(questionId)
-        }
       }
       setLoading(false)
     })
 
     return unsubscribe
+  }, [questionId])
+
+  // Increment view count only once when first loading
+  useEffect(() => {
+    if (questionId && !hasIncrementedViews.current) {
+      incrementQuestionViews(questionId)
+      hasIncrementedViews.current = true
+    }
   }, [questionId])
 
   // Real-time answers updates
