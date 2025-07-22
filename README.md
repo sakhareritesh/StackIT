@@ -13,9 +13,6 @@
 
 - **Ritesh Deepak Sakhare**  
 
-- **Anup Swarnsing Patil**  
-
----
 
 ## 🧠 Overview
 
