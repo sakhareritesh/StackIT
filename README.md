@@ -7,21 +7,13 @@
 
 ### 👑 Team Leader  
 **Vedant Harshad Deore**  
-📧 vedantdeore45@gmail.com  
- +91 90222 96054
 
 ### 👥 Team Members  
 - **Samyak Sachin Raka**  
-  📧 rakasamyak@gmail.com  
-   +91 97638 64377
 
 - **Ritesh Deepak Sakhare**  
-  📧 sakhareritesh57@gmail.com  
-   +91 92844 72560
 
 - **Anup Swarnsing Patil**  
-  📧 anuppatil.asp29@gmail.com  
-   +91 74999 61037
 
 ---
 
